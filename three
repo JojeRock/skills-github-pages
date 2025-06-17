@@ -1,0 +1,146 @@
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
+#include <Servo.h>
+
+// پین‌های نمایشگر ST7735R
+#define TFT_CS   10
+#define TFT_DC   9
+#define TFT_RST  8
+
+// پین‌های سنسور اولتراسونیک
+const int trigPin = 6;
+const int echoPin = 5;
+
+// پین سروو موتور
+Servo myServo;
+const int servoPin = 3;
+
+// تنظیمات نمایشگر
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
+const int Ymax = 128;  // ارتفاع نمایشگر
+const int Xmax = 160;  // عرض نمایشگر
+const int base = 8;    // موقعیت پایه رادار
+const int maxDistance = 200; // حداکثر برد 2 متر (200cm)
+
+// متغیرهای جهانی
+int distance;
+int currentAngle = 80;  // زاویه اولیه سروو
+
+void setup() {
+  Serial.begin(9600);
+  
+  // تنظیمات نمایشگر
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(3);
+  tft.fillScreen(ST7735_BLACK);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setTextSize(1);
+  
+  // تنظیمات سروو
+  myServo.attach(servoPin);
+  myServo.write(currentAngle);
+  
+  // تنظیمات سنسور برای برد 2 متر
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  
+  // رسم اجزای ثابت
+  drawFixedElements();
+}
+
+void loop() {
+  // اسکن از راست به چپ (80 تا 10 درجه)
+  for (int x = 80; x >= 10; x--) {
+    updateRadar(x);
+  }
+  
+  // اسکن از چپ به راست (10 تا 80 درجه)
+  for (int x = 10; x <= 80; x++) {
+    updateRadar(x);
+  }
+}
+
+void updateRadar(int angle) {
+  // میانگین‌گیری دو مرحله‌ای برای تعادل بین دقت و سرعت
+  distance = (calculateDistance() + calculateDistance()) / 2;
+
+  // فیلتر مقادیر نامعتبر
+  if (distance > maxDistance || distance < 2) distance = maxDistance;
+  
+  Serial.print("Angle: ");
+  Serial.print(angle);
+  Serial.print("°, Distance: ");
+  Serial.print(distance);
+  Serial.println("cm");
+  
+  // تنظیم زاویه سروو (معکوس کردن جهت)
+  int servoAngle = map(angle, 10, 80, 165, 15);
+  myServo.write(servoAngle);
+  
+  // محاسبه مختصات خط با مقیاس‌دهی جدید
+  int lineLength = map(distance, 0, maxDistance, 0, 100);
+  int endX = Xmax/2 + (-lineLength * cos(radians(angle*2)));
+  int endY = base + (lineLength * sin(radians(angle*2)));
+  
+  // پاک‌سازی خط قبلی
+  tft.drawLine(Xmax/2, base, endX, endY, ST7735_BLACK);
+  
+  // رنگ‌بندی بر اساس فاصله (بهینه‌شده برای 2 متر)
+  if (distance < 50) {  // زیر 0.5 متر: قرمز
+    tft.drawLine(Xmax/2, base, endX, endY, ST7735_RED);
+  } else if (distance < 100) {  // 0.5-1 متر: زرد
+    tft.drawLine(Xmax/2, base, endX, endY, ST7735_YELLOW);
+  } else {  // بالای 1 متر: سبز
+    tft.drawLine(Xmax/2, base, endX, endY, ST7735_GREEN);
+  }
+  
+  // نمایش اطلاعات
+  tft.fillRect(0, 0, 160, 10, ST7735_BLACK);
+  tft.setCursor(0, 0);
+  tft.print("Dist: ");
+  tft.print(distance);
+  tft.print("cm");
+  
+  tft.setCursor(80, 0);
+  tft.print("Angle: ");
+  tft.print(angle);
+  
+  delay(40);  // تأخیر بهینه‌شده
+}
+
+void drawFixedElements() {
+  // رسم پایه رادار
+  tft.fillCircle(Xmax/2, base, 3, ST7735_RED);
+  
+  // خط افقی پایه
+  tft.drawFastHLine(0, base, Xmax, ST7735_WHITE);
+  
+  // دایره‌های راهنما (0.5m, 1m, 1.5m, 2m)
+  tft.drawCircle(Xmax/2, base, 25, ST7735_BLUE);    // 0.5m
+  tft.drawCircle(Xmax/2, base, 50, ST7735_BLUE);    // 1m
+  tft.drawCircle(Xmax/2, base, 75, ST7735_BLUE);    // 1.5m
+  tft.drawCircle(Xmax/2, base, 100, ST7735_BLUE);   // 2m
+  
+  // نوشتن مقیاس‌ها
+  tft.setCursor(90, base - 25);
+  tft.print("0.5m");
+  tft.setCursor(90, base - 50);
+  tft.print("1m");
+  tft.setCursor(90, base - 75);
+  tft.print("1.5m");
+  tft.setCursor(90, base - 100);
+  tft.print("2m");
+}
+
+int calculateDistance() {
+  // ارسال پالس 15μs (بهینه برای برد 2 متر)
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(15);
+  digitalWrite(trigPin, LOW);
+  
+  long duration = pulseIn(echoPin, HIGH, 20000); // Timeout برای 2m
+  return duration * 0.034 / 2;
+}
