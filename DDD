@@ -1,0 +1,194 @@
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
+#include <Servo.h>
+
+// تنظیمات نمایشگر
+#define TFT_CS   10
+#define TFT_DC   9
+#define TFT_RST  8
+Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
+
+// تنظیمات سنسور
+const int TRIG_PIN = 6;
+const int ECHO_PIN = 5;
+
+// تنظیمات سروو
+Servo radarServo;
+const int SERVO_PIN = 3;
+
+// پارامترهای رادار
+const int SCAN_START_ANGLE = 30;
+const int SCAN_END_ANGLE = 150;
+const int MAX_DISTANCE = 400; // 4 متر
+const int SCAN_SPEED = 1; // کاهش سرعت برای حرکت روان سروو
+const int OBJECT_TIMEOUT = 5000; // 5 ثانیه عدم تشخیص برای پاکسازی
+
+// ساختار داده‌ها
+struct RadarPoint {
+  int angle;
+  int distance;
+  unsigned long timestamp;
+};
+
+struct DetectedObject {
+  int x, y;
+  unsigned long lastSeen;
+};
+
+// متغیرهای سیستم
+DetectedObject objects[20]; // حداکثر 20 شیء همزمان
+int objectCount = 0;
+unsigned long lastScanTime = 0;
+
+// رنگ‌ها
+#define BACKGROUND_COLOR ST7735_BLACK
+#define GRID_COLOR ST7735_DARKGREEN
+#define SCANNER_COLOR ST7735_GREEN
+#define OBJECT_COLOR ST7735_RED
+
+void setup() {
+  Serial.begin(115200);
+  
+  // تنظیمات نمایشگر
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(3);
+  tft.fillScreen(BACKGROUND_COLOR);
+  
+  // تنظیمات سروو
+  radarServo.attach(SERVO_PIN);
+  radarServo.write(90);
+  
+  // تنظیمات سنسور
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  drawRadarGrid();
+}
+
+void loop() {
+  static int currentAngle = SCAN_START_ANGLE;
+  static bool isScanningForward = true;
+  
+  // حرکت روان سروو
+  if(isScanningForward) {
+    currentAngle++;
+    if(currentAngle >= SCAN_END_ANGLE) isScanningForward = false;
+  } else {
+    currentAngle--;
+    if(currentAngle <= SCAN_START_ANGLE) isScanningForward = true;
+  }
+  
+  radarServo.write(currentAngle);
+  
+  // اندازه‌گیری فاصله
+  int distance = getFilteredDistance();
+  
+  // پردازش و نمایش
+  if(distance < MAX_DISTANCE) {
+    addObject(currentAngle, distance);
+  }
+  
+  updateDisplay(currentAngle);
+  removeOldObjects();
+  delay(15); // تاخیر برای حرکت روان سروو
+}
+
+int getFilteredDistance() {
+  // میانگین 3 نمونه برای کاهش نویز
+  long sum = 0;
+  byte validSamples = 0;
+  
+  for(byte i=0; i<3; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+    
+    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+    if(duration > 0) {
+      sum += duration;
+      validSamples++;
+    }
+    delay(5);
+  }
+  
+  return validSamples > 0 ? (sum / validSamples) * 0.034 / 2 : MAX_DISTANCE;
+}
+
+void addObject(int angle, int distance) {
+  // تبدیل به مختصات کارتزین
+  float rad = radians(angle);
+  int x = 80 + map(distance, 0, MAX_DISTANCE, 0, 70) * cos(rad);
+  int y = 64 - map(distance, 0, MAX_DISTANCE, 0, 70) * sin(rad);
+  
+  // بررسی وجود شیء مشابه
+  bool isNew = true;
+  for(int i=0; i<objectCount; i++) {
+    if(abs(objects[i].x - x) < 10 && abs(objects[i].y - y) < 10) {
+      objects[i].lastSeen = millis();
+      isNew = false;
+      break;
+    }
+  }
+  
+  // ثبت شیء جدید
+  if(isNew && objectCount < 20) {
+    objects[objectCount].x = x;
+    objects[objectCount].y = y;
+    objects[objectCount].lastSeen = millis();
+    objectCount++;
+  }
+}
+
+void removeOldObjects() {
+  for(int i=0; i<objectCount; i++) {
+    if(millis() - objects[i].lastSeen > OBJECT_TIMEOUT) {
+      // پاکسازی شیء قدیمی
+      for(int j=i; j<objectCount-1; j++) {
+        objects[j] = objects[j+1];
+      }
+      objectCount--;
+      i--;
+    }
+  }
+}
+
+void drawRadarGrid() {
+  tft.fillScreen(BACKGROUND_COLOR);
+  
+  // دایره‌های راهنما
+  for(int r=20; r<=70; r+=20) {
+    tft.drawCircle(80, 64, r, GRID_COLOR);
+  }
+  
+  // خطوط زاویه
+  for(int a=0; a<360; a+=30) {
+    float rad = radians(a);
+    int x = 80 + 75 * cos(rad);
+    int y = 64 - 75 * sin(rad);
+    tft.drawLine(80, 64, x, y, GRID_COLOR);
+  }
+}
+
+void updateDisplay(int currentAngle) {
+  // پاکسازی فقط خط اسکنر
+  tft.drawLine(80, 64, 
+              80 + 75 * cos(radians(lastScanTime % 360)),
+              64 - 75 * sin(radians(lastScanTime % 360)), 
+              BACKGROUND_COLOR);
+  
+  // رسم خط اسکنر جدید
+  float rad = radians(currentAngle);
+  int x = 80 + 75 * cos(rad);
+  int y = 64 - 75 * sin(rad);
+  tft.drawLine(80, 64, x, y, SCANNER_COLOR);
+  
+  // رسم اشیاء
+  for(int i=0; i<objectCount; i++) {
+    tft.fillCircle(objects[i].x, objects[i].y, 2, OBJECT_COLOR);
+  }
+  
+  lastScanTime = millis();
+}
