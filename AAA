@@ -1,0 +1,174 @@
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
+#include <Servo.h>
+
+// تنظیمات نمایشگر
+#define TFT_CS   10
+#define TFT_DC   9
+#define TFT_RST  8
+Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
+
+// تنظیمات سنسور
+const int TRIG_PIN = 6;
+const int ECHO_PIN = 5;
+
+// تنظیمات سروو
+Servo radarServo;
+const int SERVO_PIN = 3;
+
+// پارامترهای رادار
+const int SCAN_START_ANGLE = 15;
+const int SCAN_END_ANGLE = 165;
+const int MAX_DISTANCE = 400; // 4 متر
+const int SCAN_SPEED = 1; // درجه بر میلی‌ثانیه
+
+// متغیرهای سیستم
+struct Point {
+  int x, y;
+  unsigned long timestamp;
+};
+Point detectedObjects[50]; // ذخیره 50 نقطه آخر
+int objectCount = 0;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // تنظیمات نمایشگر
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(3);
+  tft.fillScreen(ST7735_BLACK);
+  
+  // تنظیمات سروو
+  radarServo.attach(SERVO_PIN);
+  radarServo.write(90);
+  
+  // تنظیمات سنسور
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  drawRadarGrid();
+}
+
+void loop() {
+  static int currentAngle = 90;
+  static int scanDirection = 1;
+  
+  // اسکن رفت و برگشتی
+  currentAngle += scanDirection;
+  if(currentAngle >= SCAN_END_ANGLE || currentAngle <= SCAN_START_ANGLE) {
+    scanDirection *= -1;
+  }
+  
+  radarServo.write(currentAngle);
+  
+  // اندازه‌گیری فاصله
+  int distance = getFilteredDistance();
+  
+  // پردازش و نمایش
+  if(distance < MAX_DISTANCE) {
+    addDetectedObject(currentAngle, distance);
+  }
+  
+  updateDisplay();
+  delay(SCAN_SPEED);
+}
+
+// تابع اندازه‌گیری فاصله با فیلتر نویز
+int getFilteredDistance() {
+  const int SAMPLES = 5;
+  long sum = 0;
+  
+  for(int i=0; i<SAMPLES; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+    
+    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+    sum += duration * 0.034 / 2;
+    delay(5);
+  }
+  
+  return sum / SAMPLES;
+}
+
+// تابع تبدیل مختصات قطبی به کارتزین
+Point polarToCartesian(int angle, int distance) {
+  Point p;
+  float rad = radians(angle);
+  int scaledDist = map(distance, 0, MAX_DISTANCE, 0, 60);
+  p.x = 80 + scaledDist * cos(rad);
+  p.y = 64 - scaledDist * sin(rad); // 64 = مرکز نمایشگر
+  return p;
+}
+
+// ذخیره اشیاء شناسایی شده
+void addDetectedObject(int angle, int distance) {
+  Point p = polarToCartesian(angle, distance);
+  p.timestamp = millis();
+  
+  detectedObjects[objectCount % 50] = p;
+  objectCount++;
+}
+
+// به‌روزرسانی نمایشگر
+void updateDisplay() {
+  // پاک‌سازی صفحه (به جای کل صفحه فقط بخش‌های لازم پاک می‌شوند)
+  tft.fillRect(0, 0, 160, 15, ST7735_BLACK); // ناحیه اطلاعات
+  tft.fillRect(0, 16, 160, 112, ST7735_BLACK); // ناحیه رادار
+  
+  // رسم شبکه رادار
+  drawRadarGrid();
+  
+  // نمایش اطلاعات
+  tft.setTextColor(ST7735_WHITE);
+  tft.setCursor(0, 0);
+  tft.print("Objects: ");
+  tft.print(min(objectCount, 50));
+  
+  // رسم نقاط شناسایی شده
+  int startIdx = max(0, objectCount - 50);
+  for(int i=startIdx; i<objectCount; i++) {
+    Point p = detectedObjects[i % 50];
+    
+    // محاسبه محو شدن بر اساس زمان
+    int fade = map(millis() - p.timestamp, 0, 5000, 255, 50);
+    fade = constrain(fade, 50, 255);
+    
+    // رسم نقطه با اثر محو شدن
+    tft.fillCircle(p.x, p.y, 2, tft.Color565(fade, 0, 0));
+    
+    // رسم خط به مرکز برای اشیاء نزدیک
+    if(p.timestamp > millis() - 1000) {
+      tft.drawLine(80, 64, p.x, p.y, tft.Color565(fade/3, 0, 0));
+    }
+  }
+  
+  // نمایش اسکنر
+  drawScanner(80, 64, 70, map(millis() % 2000, 0, 2000, 0, 360));
+}
+
+// رسم شبکه رادار
+void drawRadarGrid() {
+  tft.drawCircle(80, 64, 20, ST7735_BLUE);  // 1m
+  tft.drawCircle(80, 64, 40, ST7735_BLUE);  // 2m
+  tft.drawCircle(80, 64, 60, ST7735_BLUE);  // 3m
+  
+  // خطوط راهنما
+  for(int a=0; a<360; a+=30) {
+    float rad = radians(a);
+    int x = 80 + 65 * cos(rad);
+    int y = 64 - 65 * sin(rad);
+    tft.drawLine(80, 64, x, y, ST7735_DARKGRAY);
+  }
+}
+
+// نمایش اسکنر متحرک
+void drawScanner(int x, int y, int length, int angle) {
+  float rad = radians(angle);
+  int x2 = x + length * cos(rad);
+  int y2 = y - length * sin(rad);
+  tft.drawLine(x, y, x2, y2, ST7735_GREEN);
+}
