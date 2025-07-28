@@ -22,10 +22,9 @@ class HighPerformanceNozzle:
             
             # مشخصات ساخت
             'wall_thickness': 1.0,   # ضخامت دیواره (mm)
-            'smoothness': 50         # کیفیت سطح (تعداد segments)
+            'smoothness': 50         # کیفیت سطح
         }
         
-        # ایجاد هندسه
         self.create_geometry()
         self.export()
     
@@ -52,46 +51,38 @@ class HighPerformanceNozzle:
         else:
             r1, r2, r3 = self.r_out_in, self.r_out_th, self.r_out_ex
         
-        # نقاط کلیدی
-        points = [
-            (0, r1),
-            (-self.params['conv_length'], r2),
-            (-self.params['conv_length'] - self.params['throat_length'], r2),
-            (-self.params['conv_length'] - self.params['throat_length'] - self.params['div_length'], r3),
-            (-self.params['conv_length'] - self.params['throat_length'] - self.params['div_length'], 0),
-            (0, 0)
+        return [
+            App.Vector(0, r1, 0),
+            App.Vector(-self.params['conv_length'], r2, 0),
+            App.Vector(-self.params['conv_length'] - self.params['throat_length'], r2, 0),
+            App.Vector(-self.params['conv_length'] - self.params['throat_length'] - self.params['div_length'], r3, 0),
+            App.Vector(-self.params['conv_length'] - self.params['throat_length'] - self.params['div_length'], 0, 0),
+            App.Vector(0, 0, 0)
         ]
-        
-        # تبدیل به ویectors
-        return [App.Vector(x, y, 0) for x, y in points]
     
     def create_geometry(self):
         """ساخت نازل با کیفیت بالا"""
         self.calculate_geometry()
         
         # ایجاد سیم‌ها
-        internal_wire = Part.makePolygon(self.create_profile(internal=True))
-        external_wire = Part.makePolygon(self.create_profile(internal=False))
+        internal_wire = Part.makePolygon(self.create_profile(True))
+        external_wire = Part.makePolygon(self.create_profile(False))
         
-        # چرخش با کیفیت بالا
+        # چرخش با تنظیمات بهینه
         self.internal_shell = internal_wire.revolve(
             App.Vector(0,0,0), 
             App.Vector(1,0,0), 
-            360, 
-            self.params['smoothness']
+            360
         )
         
         self.external_shell = external_wire.revolve(
             App.Vector(0,0,0), 
             App.Vector(1,0,0), 
-            360,
-            self.params['smoothness']
+            360
         )
         
         # ایجاد نازل توخالی
         self.nozzle_solid = self.external_shell.cut(self.internal_shell)
-        
-        # بهینه‌سازی سطح
         self.nozzle_solid = self.nozzle_solid.removeSplitter()
         
         # اضافه به سند
@@ -111,10 +102,8 @@ class HighPerformanceNozzle:
         if format.upper() == 'STEP':
             self.obj.Shape.exportStep(export_path)
         elif format.upper() == 'STL':
-            # تنظیمات STL با کیفیت بالا
-            mesh = self.obj.Shape.tessellate(0.01)  # دقت 0.01mm
-            Part.show(mesh)
-            App.ActiveDocument.ActiveObject.Mesh.write(export_path)
+            import Mesh
+            Mesh.export([self.obj], export_path)
         else:
             raise ValueError("فرمت پشتیبانی نشده")
         
