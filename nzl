@@ -1,0 +1,61 @@
+import FreeCAD as App
+import Part
+import math
+
+def create_your_nozzle():
+    doc = App.ActiveDocument or App.newDocument()
+    
+    # ابعاد دقیق شما (مقادیر بر حسب mm)
+    params = {
+        "inlet_dia": 20.0,      # قطر بالای بخش همگرا
+        "throat_dia": 3.5,      # قطر گلوگاه
+        "exit_dia": 6.0,        # قطر بالای بخش واگرا
+        "conv_length": 10.0,    # طول بخش همگرا
+        "div_length": 15.0,     # طول بخش واگرا
+        "throat_length": 2.0,   # طول گلوگاه
+        "wall_thickness": 1.0   # ضخامت دیواره (مقدار پیشنهادی)
+    }
+    
+    # محاسبات شعاع‌ها
+    r_outer_in = params["inlet_dia"] / 2
+    r_outer_throat = params["throat_dia"] / 2
+    r_outer_exit = params["exit_dia"] / 2
+    t = params["wall_thickness"]
+    
+    # پروفیل خارجی (مطابق ابعاد شما)
+    outer_points = [
+        App.Vector(0, r_outer_in, 0),                                   # نقطه شروع
+        App.Vector(-params["conv_length"], r_outer_throat, 0),          # انتهای همگرا
+        App.Vector(-params["conv_length"] - params["throat_length"], r_outer_throat, 0), # انتهای گلوگاه
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], r_outer_exit, 0), # انتهای واگرا
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0), # پایین
+        App.Vector(0, 0, 0)                                             # برگشت به مبدأ
+    ]
+    outer_wire = Part.makePolygon(outer_points)
+    
+    # پروفیل داخلی (توخالی)
+    inner_points = [
+        App.Vector(0, r_outer_in - t, 0),
+        App.Vector(-params["conv_length"], max(r_outer_throat - t, 0.1),  # حداقل 0.1mm برای جلوگیری از خطا
+        App.Vector(-params["conv_length"] - params["throat_length"], max(r_outer_throat - t, 0.1)),
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], max(r_outer_exit - t, 0.1)),
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0),
+        App.Vector(0, 0, 0)
+    ]
+    inner_wire = Part.makePolygon(inner_points)
+    
+    # ایجاد نازل توخالی
+    outer_shell = outer_wire.revolve(App.Vector(0, 0, 0), App.Vector(1, 0, 0), 360)
+    inner_shell = inner_wire.revolve(App.Vector(0, 0, 0), App.Vector(1, 0, 0), 360)
+    nozzle_solid = outer_shell.cut(inner_shell)
+    
+    # اضافه به سند
+    obj = doc.addObject("Part::Feature", "YourPreciseNozzle")
+    obj.Shape = nozzle_solid
+    doc.recompute()
+    
+    print("نازل توخالی با ابعاد دقیق شما ایجاد شد!")
+    return obj
+
+# اجرای تابع
+your_nozzle = create_your_nozzle()
