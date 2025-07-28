@@ -2,74 +2,88 @@ import FreeCAD as App
 import Part
 import math
 
-def create_nozzle_with_thickness():
+def create_optimized_nozzle():
     doc = App.ActiveDocument or App.newDocument()
     
-    # ابعاد داخلی (مطابق مشخصات شما)
-    internal_params = {
-        "inlet_dia": 20.0,      # قطر داخلی ورودی
-        "throat_dia": 3.5,      # قطر داخلی گلوگاه
-        "exit_dia": 6.0,        # قطر داخلی خروجی
-        "conv_length": 10.0,    # طول بخش همگرا
-        "div_length": 15.0,     # طول بخش واگرا
-        "throat_length": 2.0,   # طول گلوگاه
-        "wall_thickness": 1.5   # ضخامت دیواره
+    # پارامترهای طراحی دقیق (مقادیر بر حسب mm)
+    params = {
+        # ابعاد داخلی
+        "inlet_dia": 20.0,        # قطر داخلی ورودی همگرا
+        "throat_dia": 3.5,        # قطر داخلی گلوگاه
+        "exit_dia": 6.0,          # قطر داخلی خروجی واگرا
+        "conv_angle": 30.0,       # زاویه همگرا (درجه)
+        "div_angle": 15.0,        # زاویه واگرا (درجه)
+        "conv_length": 10.0,      # طول بخش همگرا
+        "throat_length": 2.0,     # طول گلوگاه
+        "div_length": 15.0,       # طول بخش واگرا
+        "wall_thickness": 1.0     # ضخامت دیواره (1mm مطابق درخواست)
     }
+
+    # محاسبات خودکار --------------------------------------------------
+    # محاسبه شعاع‌های داخلی
+    r_in = params["inlet_dia"] / 2
+    r_th = params["throat_dia"] / 2
+    r_ex = params["exit_dia"] / 2
     
-    # محاسبه ابعاد خارجی (داخلی + 2x ضخامت)
-    def calc_external_dia(internal_dia):
-        return internal_dia + 2 * internal_params["wall_thickness"]
+    # محاسبه شعاع‌های خارجی (داخلی + ضخامت)
+    r_out_in = r_in + params["wall_thickness"]
+    r_out_th = r_th + params["wall_thickness"]
+    r_out_ex = r_ex + params["wall_thickness"]
     
-    # محاسبات شعاع‌ها
-    # داخلی
-    r_in = internal_params["inlet_dia"] / 2
-    r_th = internal_params["throat_dia"] / 2
-    r_ex = internal_params["exit_dia"] / 2
-    
-    # خارجی
-    r_out_in = calc_external_dia(internal_params["inlet_dia"]) / 2
-    r_out_th = calc_external_dia(internal_params["throat_dia"]) / 2
-    r_out_ex = calc_external_dia(internal_params["exit_dia"]) / 2
-    
-    # ایجاد پروفیل داخلی
+    # محاسبه نقاط کلیدی برای پروفیل داخلی -----------------------------
     internal_points = [
+        # همگرا
         App.Vector(0, r_in, 0),
-        App.Vector(-internal_params["conv_length"], r_th, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"], r_th, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], r_ex, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], 0, 0),
-        App.Vector(0, 0, 0)
+        App.Vector(-params["conv_length"], r_th, 0),
+        
+        # گلوگاه
+        App.Vector(-params["conv_length"] - params["throat_length"], r_th, 0),
+        
+        # واگرا
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], r_ex, 0),
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0),
+        App.Vector(0, 0, 0)  # بستن پروفیل
     ]
-    internal_wire = Part.makePolygon(internal_points)
     
-    # ایجاد پروفیل خارجی
+    # محاسبه نقاط کلیدی برای پروفیل خارجی ------------------------------
     external_points = [
+        # همگرا
         App.Vector(0, r_out_in, 0),
-        App.Vector(-internal_params["conv_length"], r_out_th, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"], r_out_th, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], r_out_ex, 0),
-        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], 0, 0),
-        App.Vector(0, 0, 0)
+        App.Vector(-params["conv_length"], r_out_th, 0),
+        
+        # گلوگاه
+        App.Vector(-params["conv_length"] - params["throat_length"], r_out_th, 0),
+        
+        # واگرا
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], r_out_ex, 0),
+        App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0),
+        App.Vector(0, 0, 0)  # بستن پروفیل
     ]
+    
+    # ایجاد سیم‌ها از نقاط
+    internal_wire = Part.makePolygon(internal_points)
     external_wire = Part.makePolygon(external_points)
     
-    # ایجاد نازل با ضخامت
+    # ایجاد حجم سه‌بعدی با چرخش حول محور X ----------------------------
     internal_shell = internal_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
     external_shell = external_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
     nozzle_solid = external_shell.cut(internal_shell)
     
-    # اضافه به سند
-    obj = doc.addObject("Part::Feature", "Nozzle_with_Wall")
+    # اضافه کردن به سند
+    obj = doc.addObject("Part::Feature", "Optimized_Nozzle")
     obj.Shape = nozzle_solid
     doc.recompute()
     
-    print("نازل با ضخامت 1.5mm ایجاد شد!")
-    print(f"قطرهای خارجی نهایی:")
-    print(f"- ورودی: {calc_external_dia(internal_params['inlet_dia'])}mm")
-    print(f"- گلوگاه: {calc_external_dia(internal_params['throat_dia'])}mm")
-    print(f"- خروجی: {calc_external_dia(internal_params['exit_dia'])}mm")
+    # خروجی اطلاعات طراحی
+    print("=== طراحی نازل با مشخصات زیر تکمیل شد ===")
+    print(f"بخش همگرا: قطر داخلی {params['inlet_dia']}mm -> {params['throat_dia']}mm")
+    print(f"زاویه همگرا: {params['conv_angle']}°")
+    print(f"گلوگاه: قطر {params['throat_dia']}mm به طول {params['throat_length']}mm")
+    print(f"بخش واگرا: قطر {params['throat_dia']}mm -> {params['exit_dia']}mm")
+    print(f"زاویه واگرا: {params['div_angle']}°")
+    print(f"ضخامت دیواره یکنواخت: {params['wall_thickness']}mm")
     
     return obj
 
 # اجرای تابع
-nozzle = create_nozzle_with_thickness()
+optimized_nozzle = create_optimized_nozzle()
