@@ -13,7 +13,7 @@ def create_your_nozzle():
         "conv_length": 10.0,    # طول بخش همگرا
         "div_length": 15.0,     # طول بخش واگرا
         "throat_length": 2.0,   # طول گلوگاه
-        "wall_thickness": 1.0   # ضخامت دیواره (مقدار پیشنهادی)
+        "wall_thickness": 1.0   # ضخامت دیواره
     }
     
     # محاسبات شعاع‌ها
@@ -36,7 +36,7 @@ def create_your_nozzle():
     # پروفیل داخلی (توخالی)
     inner_points = [
         App.Vector(0, r_outer_in - t, 0),
-        App.Vector(-params["conv_length"], max(r_outer_throat - t, 0.1),  # حداقل 0.1mm برای جلوگیری از خطا
+        App.Vector(-params["conv_length"], max(r_outer_throat - t, 0.1),  # حداقل 0.1mm
         App.Vector(-params["conv_length"] - params["throat_length"], max(r_outer_throat - t, 0.1)),
         App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], max(r_outer_exit - t, 0.1)),
         App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0),
