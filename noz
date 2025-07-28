@@ -1,0 +1,54 @@
+import FreeCAD as App
+import Part
+import math
+
+# پارامترهای نازل (بر اساس ابعاد شما)
+params = {
+    "inlet_dia": 20.0,    # قطر ورودی (mm)
+    "throat_dia": 3.5,    # قطر گلوگاه (mm)
+    "exit_dia": 6.0,      # قطر خروجی (mm)
+    "conv_length": 10.0,  # طول بخش همگرا (mm)
+    "div_length": 15.0,   # طول بخش واگرا (mm)
+    "throat_length": 2.0, # طول گلوگاه (mm)
+    "conv_angle": 30.0,   # زاویه همگرا (درجه)
+    "div_angle": 15.0     # زاویه واگرا (درجه)
+}
+
+def create_nozzle():
+    doc = App.ActiveDocument or App.newDocument()
+    
+    # محاسبات هندسی
+    r_inlet = params["inlet_dia"] / 2
+    r_throat = params["throat_dia"] / 2
+    r_exit = params["exit_dia"] / 2
+    
+    # ایجاد پروفیل 2D
+    points = []
+    # بخش همگرا
+    points.append(App.Vector(0, r_inlet, 0))
+    points.append(App.Vector(-params["conv_length"], r_throat, 0))
+    # بخش گلوگاه
+    points.append(App.Vector(-params["conv_length"] - params["throat_length"], r_throat, 0))
+    # بخش واگرا
+    points.append(App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], r_exit, 0))
+    # پایین پروفیل (روی محور X)
+    points.append(App.Vector(-params["conv_length"] - params["throat_length"] - params["div_length"], 0, 0))
+    points.append(App.Vector(0, 0, 0))
+    
+    # ایجاد سیم (Wire) از نقاط
+    wire = Part.makePolygon(points)
+    
+    # چرخش حول محور X
+    nozzle_shell = wire.revolve(App.Vector(0, 0, 0), App.Vector(1, 0, 0), 360)
+    nozzle_solid = Part.Solid(nozzle_shell)
+    
+    # اضافه کردن به سند
+    obj = doc.addObject("Part::Feature", "Nozzle")
+    obj.Shape = nozzle_solid
+    doc.recompute()
+    
+    print("نازل با موفقیت ایجاد شد!")
+    return obj
+
+# اجرای تابع
+nozzle = create_nozzle()
