@@ -2,55 +2,74 @@ import FreeCAD as App
 import Part
 import math
 
-def create_your_nozzle():
+def create_nozzle_with_thickness():
     doc = App.ActiveDocument or App.newDocument()
     
-    params = {
-        "inlet_dia": 20.0,
-        "throat_dia": 3.5,
-        "exit_dia": 6.0,
-        "conv_length": 10.0,
-        "div_length": 15.0,
-        "throat_length": 2.0,
-        "wall_thickness": 1.0
+    # ابعاد داخلی (مطابق مشخصات شما)
+    internal_params = {
+        "inlet_dia": 20.0,      # قطر داخلی ورودی
+        "throat_dia": 3.5,      # قطر داخلی گلوگاه
+        "exit_dia": 6.0,        # قطر داخلی خروجی
+        "conv_length": 10.0,    # طول بخش همگرا
+        "div_length": 15.0,     # طول بخش واگرا
+        "throat_length": 2.0,   # طول گلوگاه
+        "wall_thickness": 1.5   # ضخامت دیواره
     }
     
-    # محاسبات شعاع
-    r_in = params["inlet_dia"] / 2
-    r_th = params["throat_dia"] / 2
-    r_ex = params["exit_dia"] / 2
-    t = params["wall_thickness"]
+    # محاسبه ابعاد خارجی (داخلی + 2x ضخامت)
+    def calc_external_dia(internal_dia):
+        return internal_dia + 2 * internal_params["wall_thickness"]
     
-    # پروفیل خارجی
-    outer_points = [
+    # محاسبات شعاع‌ها
+    # داخلی
+    r_in = internal_params["inlet_dia"] / 2
+    r_th = internal_params["throat_dia"] / 2
+    r_ex = internal_params["exit_dia"] / 2
+    
+    # خارجی
+    r_out_in = calc_external_dia(internal_params["inlet_dia"]) / 2
+    r_out_th = calc_external_dia(internal_params["throat_dia"]) / 2
+    r_out_ex = calc_external_dia(internal_params["exit_dia"]) / 2
+    
+    # ایجاد پروفیل داخلی
+    internal_points = [
         App.Vector(0, r_in, 0),
-        App.Vector(-params["conv_length"], r_th, 0),
-        App.Vector(-params["conv_length"]-params["throat_length"], r_th, 0),
-        App.Vector(-params["conv_length"]-params["throat_length"]-params["div_length"], r_ex, 0),
-        App.Vector(-params["conv_length"]-params["throat_length"]-params["div_length"], 0, 0),
+        App.Vector(-internal_params["conv_length"], r_th, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"], r_th, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], r_ex, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], 0, 0),
         App.Vector(0, 0, 0)
     ]
-    outer_wire = Part.makePolygon(outer_points)
+    internal_wire = Part.makePolygon(internal_points)
     
-    # پروفیل داخلی
-    inner_points = [
-        App.Vector(0, r_in-t, 0),
-        App.Vector(-params["conv_length"], max(r_th-t, 0.1), 0),
-        App.Vector(-params["conv_length"]-params["throat_length"], max(r_th-t, 0.1), 0),
-        App.Vector(-params["conv_length"]-params["throat_length"]-params["div_length"], max(r_ex-t, 0.1), 0),
-        App.Vector(-params["conv_length"]-params["throat_length"]-params["div_length"], 0, 0),
+    # ایجاد پروفیل خارجی
+    external_points = [
+        App.Vector(0, r_out_in, 0),
+        App.Vector(-internal_params["conv_length"], r_out_th, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"], r_out_th, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], r_out_ex, 0),
+        App.Vector(-internal_params["conv_length"] - internal_params["throat_length"] - internal_params["div_length"], 0, 0),
         App.Vector(0, 0, 0)
     ]
-    inner_wire = Part.makePolygon(inner_points)
+    external_wire = Part.makePolygon(external_points)
     
-    # ایجاد نازل
-    outer_shell = outer_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
-    inner_shell = inner_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
-    nozzle = outer_shell.cut(inner_shell)
+    # ایجاد نازل با ضخامت
+    internal_shell = internal_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
+    external_shell = external_wire.revolve(App.Vector(0,0,0), App.Vector(1,0,0), 360)
+    nozzle_solid = external_shell.cut(internal_shell)
     
-    obj = doc.addObject("Part::Feature", "Nozzle")
-    obj.Shape = nozzle
+    # اضافه به سند
+    obj = doc.addObject("Part::Feature", "Nozzle_with_Wall")
+    obj.Shape = nozzle_solid
     doc.recompute()
+    
+    print("نازل با ضخامت 1.5mm ایجاد شد!")
+    print(f"قطرهای خارجی نهایی:")
+    print(f"- ورودی: {calc_external_dia(internal_params['inlet_dia'])}mm")
+    print(f"- گلوگاه: {calc_external_dia(internal_params['throat_dia'])}mm")
+    print(f"- خروجی: {calc_external_dia(internal_params['exit_dia'])}mm")
+    
     return obj
 
-nozzle = create_your_nozzle()
+# اجرای تابع
+nozzle = create_nozzle_with_thickness()
