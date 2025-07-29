@@ -1,0 +1,94 @@
+#include <driver/adc.h>
+#include <driver/dac.h>
+#include <esp_adc_cal.h>
+
+// تعریف پین‌ها
+#define ADC_X_PIN       GPIO_NUM_32
+#define ADC_Y_PIN       GPIO_NUM_33  
+#define ADC_Z_PIN       GPIO_NUM_34
+#define DAC_OUTPUT_PIN  DAC_CHANNEL_1
+
+// تنظیمات ADC
+#define ADC_WIDTH       ADC_WIDTH_BIT_12
+#define ADC_ATTEN       ADC_ATTEN_DB_11
+#define ADC_SAMPLES     64
+#define UPDATE_INTERVAL 10
+
+// محدودیت DAC برای 3V
+#define DAC_MAX_3V      232
+
+// کالیبراسیون ADC
+esp_adc_cal_characteristics_t adc_chars;
+
+// متغیرهای فیلتر
+float filtered_x = 0, filtered_y = 0, filtered_z = 0;
+const float FILTER_ALPHA = 0.1;
+
+void setup() {
+    // تنظیم ADC
+    adc1_config_width(ADC_WIDTH);
+    adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN);
+    adc1_config_channel_atten(ADC1_CHANNEL_5, ADC_ATTEN);
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN);
+    
+    // کالیبراسیون ADC
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN, ADC_WIDTH, 1100, &adc_chars);
+    
+    // تنظیم DAC
+    dac_output_enable(DAC_OUTPUT_PIN);
+    dac_output_voltage(DAC_OUTPUT_PIN, 0);
+    
+    delay(1000);
+}
+
+float readADC_Averaged(adc1_channel_t channel) {
+    uint32_t sum = 0;
+    for(int i = 0; i < ADC_SAMPLES; i++) {
+        sum += adc1_get_raw(channel);
+        delayMicroseconds(10);
+    }
+    
+    uint32_t avg_raw = sum / ADC_SAMPLES;
+    uint32_t voltage_mv = esp_adc_cal_raw_to_voltage(avg_raw, &adc_chars);
+    
+    return voltage_mv / 1000.0;
+}
+
+float voltageToField(float voltage) {
+    return (voltage - 1.5) * (5.0 / 3.0);
+}
+
+float calculateMagnitude(float x, float y, float z) {
+    return sqrt(x*x + y*y + z*z);
+}
+
+uint8_t magnitudeToDAC(float magnitude) {
+    float normalized = magnitude / 4.33;
+    normalized = constrain(normalized, 0.0, 1.0);
+    
+    return (uint8_t)(normalized * DAC_MAX_3V);
+}
+
+void loop() {
+    // خواندن مقادیر
+    float voltage_x = readADC_Averaged(ADC1_CHANNEL_4);
+    float voltage_y = readADC_Averaged(ADC1_CHANNEL_5);  
+    float voltage_z = readADC_Averaged(ADC1_CHANNEL_6);
+    
+    // تبدیل به میدان مغناطیسی
+    float field_x = voltageToField(voltage_x);
+    float field_y = voltageToField(voltage_y);
+    float field_z = voltageToField(voltage_z);
+    
+    // فیلتر
+    filtered_x = FILTER_ALPHA * field_x + (1 - FILTER_ALPHA) * filtered_x;
+    filtered_y = FILTER_ALPHA * field_y + (1 - FILTER_ALPHA) * filtered_y;
+    filtered_z = FILTER_ALPHA * field_z + (1 - FILTER_ALPHA) * filtered_z;
+    
+    // محاسبه و خروجی
+    float magnitude = calculateMagnitude(filtered_x, filtered_y, filtered_z);
+    uint8_t dac_value = magnitudeToDAC(magnitude);
+    dac_output_voltage(DAC_OUTPUT_PIN, dac_value);
+    
+    delay(UPDATE_INTERVAL);
+}
