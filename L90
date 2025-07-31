@@ -1,0 +1,210 @@
+import FreeCAD
+import Part
+import Sketcher
+import Draft
+
+# ایجاد یک سند جدید
+doc = FreeCAD.newDocument("L90_Machine")
+
+# تنظیمات اولیه
+scale_factor = 1.0  # ضریب مقیاس برای اندازه‌ها
+
+# تابع برای ایجاد بدنه اصلی
+def create_main_body():
+    # ایجاد اسکچ برای بدنه اصلی
+    body_sketch = doc.addObject('Sketcher::SketchObject', 'Body_Sketch')
+    body_sketch.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(0, 0, 0, 1))
+    
+    # نقاط مستطیل بدنه اصلی (مقیاس‌شده)
+    points = [
+        (-500*scale_factor, -300*scale_factor),
+        (500*scale_factor, -300*scale_factor),
+        (500*scale_factor, 300*scale_factor),
+        (-500*scale_factor, 300*scale_factor)
+    ]
+    
+    # ایجاد خطوط مستطیل
+    for i in range(3):
+        body_sketch.addGeometry(Part.LineSegment(
+            FreeCAD.Vector(points[i][0], points[i][1], 0),
+            FreeCAD.Vector(points[i+1][0], points[i+1][1], 0)
+        ), False)
+    body_sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(points[3][0], points[3][1], 0),
+        FreeCAD.Vector(points[0][0], points[0][1], 0)
+    ), False)
+    
+    # اکسترود اسکچ به ارتفاع 400mm
+    body = doc.addObject("Part::Extrusion", "Main_Body")
+    body.Base = body_sketch
+    body.DirMode = "Normal"
+    body.LengthFwd = 400*scale_factor
+    body.LengthRev = 0
+    body.Solid = True
+    
+    # گرد کردن لبه‌ها
+    fillet = doc.addObject("Part::Fillet", "Body_Fillet")
+    fillet.Base = body
+    fillet.Radius = 50*scale_factor
+    edges = []
+    for i in range(8):  # 8 لبه برای مستطیل اکسترود شده
+        edges.append((i, fillet.Radius, 1))
+    fillet.Edges = edges
+    
+    doc.recompute()
+    return fillet
+
+# تابع برای ایجاد کابین
+def create_cabin(main_body):
+    # اسکچ کابین
+    cabin_sketch = doc.addObject('Sketcher::SketchObject', 'Cabin_Sketch')
+    cabin_sketch.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(150*scale_factor, 0, 400*scale_factor),
+        FreeCAD.Rotation(0, 0, 0, 1)
+    )
+    
+    # نقاط کابین (شکل ذوزنقه‌ای)
+    points = [
+        (-300*scale_factor, -200*scale_factor),
+        (300*scale_factor, -200*scale_factor),
+        (200*scale_factor, 200*scale_factor),
+        (-200*scale_factor, 200*scale_factor)
+    ]
+    
+    # ایجاد خطوط کابین
+    for i in range(3):
+        cabin_sketch.addGeometry(Part.LineSegment(
+            FreeCAD.Vector(points[i][0], points[i][1], 0),
+            FreeCAD.Vector(points[i+1][0], points[i+1][1], 0)
+        ), False)
+    cabin_sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(points[3][0], points[3][1], 0),
+        FreeCAD.Vector(points[0][0], points[0][1], 0)
+    ), False)
+    
+    # اکسترود کابین
+    cabin = doc.addObject("Part::Extrusion", "Cabin")
+    cabin.Base = cabin_sketch
+    cabin.DirMode = "Normal"
+    cabin.LengthFwd = 300*scale_factor
+    cabin.LengthRev = 0
+    cabin.Solid = True
+    
+    # ایجاد پنجره‌های کابین
+    create_windows(cabin)
+    
+    doc.recompute()
+    return cabin
+
+# تابع برای ایجاد پنجره‌ها
+def create_windows(cabin):
+    # پنجره جلو
+    front_window = doc.addObject("Part::Box", "Front_Window")
+    front_window.Length = 400*scale_factor
+    front_window.Width = 10*scale_factor
+    front_window.Height = 200*scale_factor
+    front_window.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(150*scale_factor, -200*scale_factor, 550*scale_factor),
+        FreeCAD.Rotation(0, 45, 0)
+    )
+    
+    # پنجره‌های کناری (دو طرف)
+    for i, y_pos in enumerate([-180*scale_factor, 180*scale_factor]):
+        side_window = doc.addObject("Part::Box", f"Side_Window_{i+1}")
+        side_window.Length = 10*scale_factor
+        side_window.Width = 300*scale_factor
+        side_window.Height = 150*scale_factor
+        side_window.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(-50*scale_factor, y_pos, 550*scale_factor),
+            FreeCAD.Rotation(0, 0, 0)
+        )
+    
+    doc.recompute()
+
+# تابع برای ایجاد چرخ‌ها
+def create_wheels():
+    wheels = []
+    positions = [
+        (-350*scale_factor, -250*scale_factor, 100*scale_factor),
+        (350*scale_factor, -250*scale_factor, 100*scale_factor),
+        (-350*scale_factor, 250*scale_factor, 100*scale_factor),
+        (350*scale_factor, 250*scale_factor, 100*scale_factor)
+    ]
+    
+    for i, pos in enumerate(positions):
+        wheel = doc.addObject("Part::Cylinder", f"Wheel_{i+1}")
+        wheel.Radius = 120*scale_factor
+        wheel.Height = 80*scale_factor
+        wheel.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(pos[0], pos[1], pos[2]),
+            FreeCAD.Rotation(0, 90, 0)
+        )
+        
+        # ایجاد دیسک چرخ
+        disk = doc.addObject("Part::Cylinder", f"Wheel_Disk_{i+1}")
+        disk.Radius = 60*scale_factor
+        disk.Height = 100*scale_factor
+        disk.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(pos[0], pos[1], pos[2]+40*scale_factor),
+            FreeCAD.Rotation(0, 90, 0)
+        )
+        disk.ViewObject.ShapeColor = (0.2, 0.2, 0.2)
+        
+        wheels.append(wheel)
+    
+    doc.recompute()
+    return wheels
+
+# تابع برای ایجاد بازوی جرثقیل
+def create_crane_arm():
+    # پایه بازو
+    base = doc.addObject("Part::Cylinder", "Crane_Base")
+    base.Radius = 80*scale_factor
+    base.Height = 200*scale_factor
+    base.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(-400*scale_factor, 0, 400*scale_factor),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # بازوی اصلی
+    arm = doc.addObject("Part::Box", "Main_Arm")
+    arm.Length = 800*scale_factor
+    arm.Width = 100*scale_factor
+    arm.Height = 100*scale_factor
+    arm.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(-400*scale_factor, -50*scale_factor, 600*scale_factor),
+        FreeCAD.Rotation(0, -30, 0)
+    )
+    
+    # بازوی ثانویه
+    secondary_arm = doc.addObject("Part::Box", "Secondary_Arm")
+    secondary_arm.Length = 500*scale_factor
+    secondary_arm.Width = 80*scale_factor
+    secondary_arm.Height = 80*scale_factor
+    secondary_arm.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(100*scale_factor, -40*scale_factor, 650*scale_factor),
+        FreeCAD.Rotation(0, -60, 0)
+    )
+    
+    doc.recompute()
+    return [base, arm, secondary_arm]
+
+# تابع اصلی برای ساخت مدل
+def build_l90_machine():
+    main_body = create_main_body()
+    cabin = create_cabin(main_body)
+    wheels = create_wheels()
+    crane_arm = create_crane_arm()
+    
+    # تغییر رنگ اجزا
+    main_body.ViewObject.ShapeColor = (0.8, 0.1, 0.1)  # قرمز
+    cabin.ViewObject.ShapeColor = (0.7, 0.7, 0.7)      # خاکستری
+    for wheel in wheels:
+        wheel.ViewObject.ShapeColor = (0.1, 0.1, 0.1)  # سیاه
+    
+    doc.recompute()
+    FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+# اجرای تابع اصلی
+build_l90_machine()
