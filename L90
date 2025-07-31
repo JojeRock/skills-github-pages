@@ -42,17 +42,8 @@ def create_main_body():
     body.LengthRev = 0
     body.Solid = True
     
-    # گرد کردن لبه‌ها
-    fillet = doc.addObject("Part::Fillet", "Body_Fillet")
-    fillet.Base = body
-    fillet.Radius = 50*scale_factor
-    edges = []
-    for i in range(8):  # 8 لبه برای مستطیل اکسترود شده
-        edges.append((i, fillet.Radius, 1))
-    fillet.Edges = edges
-    
     doc.recompute()
-    return fillet
+    return body
 
 # تابع برای ایجاد کابین
 def create_cabin(main_body):
