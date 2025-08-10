@@ -1,0 +1,73 @@
+import FreeCAD
+import Part
+import InvoluteGearFeature
+import math
+
+def create_half_spur_gear():
+    # پارامترهای طراحی
+    teeth = 12           # تعداد دنده‌ها
+    module = 1.0         # مدول (باید با چرخ دنده شانه ای یکسان باشد)
+    thickness = 10.0     # ضخامت چرخ دنده
+    shaft_dia = 5.0      # قطر محور موتور
+    
+    doc = FreeCAD.newDocument("HalfSpurGear")
+    
+    # 1. ایجاد چرخ دنده کامل
+    gear = doc.addObject("Part::FeaturePython", "SpurGear")
+    InvoluteGearFeature.InvoluteGear(gear)
+    gear.NumberOfTeeth = teeth
+    gear.Module = module
+    gear.PressureAngle = 20.0
+    gear.Height = thickness
+    
+    # 2. ایجاد بلوک برای برش نصف چرخ دنده
+    cutter = doc.addObject("Part::Box", "CutterBox")
+    cutter.Length = module * teeth * 2
+    cutter.Width = module * teeth
+    cutter.Height = thickness * 2
+    
+    # موقعیت دهی بلوک برش
+    gear.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(0, 0, 0))
+    cutter.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(-module*teeth/2, 0, -thickness/2),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # 3. برش چرخ دنده به نصف
+    half_gear = doc.addObject("Part::Cut", "HalfGear")
+    half_gear.Base = gear
+    half_gear.Tool = cutter
+    
+    # 4. ایجاد سوراخ مرکزی برای محور موتور
+    shaft_hole = doc.addObject("Part::Cylinder", "ShaftHole")
+    shaft_hole.Radius = shaft_dia / 2
+    shaft_hole.Height = thickness * 1.2
+    shaft_hole.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, -thickness*0.1),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # 5. تفریق سوراخ از چرخ دنده
+    final_gear = doc.addObject("Part::Cut", "FinalGear")
+    final_gear.Base = half_gear
+    final_gear.Tool = shaft_hole
+    
+    # 6. ایجاد محور موتور (اختیاری)
+    shaft = doc.addObject("Part::Cylinder", "MotorShaft")
+    shaft.Radius = shaft_dia / 2 - 0.2  # کمی کوچکتر برای فیت شدن
+    shaft.Height = 15.0
+    shaft.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, -15),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # تنظیمات نمایش
+    final_gear.ViewObject.ShapeColor = (0.2, 0.8, 0.2)  # رنگ سبز
+    shaft_hole.ViewObject.Visibility = False
+    cutter.ViewObject.Visibility = False
+    shaft.ViewObject.ShapeColor = (0.5, 0.5, 0.5)  # رنگ خاکستری
+    
+    doc.recompute()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+create_half_spur_gear()
