@@ -3,56 +3,75 @@ import FreeCADGui
 import Part
 import math
 
-def create_rack_gear():
+def create_precision_rack():
     try:
-        doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("RackGear")
+        # ایجاد سند جدید
+        doc = FreeCAD.newDocument("PrecisionRack")
         
-        # پارامترهای طراحی
-        length = 80.0      # طول استوانه (mm)
-        diameter = 12.0    # قطر استوانه (mm)
-        teeth = 25         # تعداد دنده‌ها
+        # پارامترهای طراحی دقیق
+        total_length = 60.0      # طول کل استوانه: 6 سانت (60mm)
+        diameter = 15.0          # قطر استوانه: 1.5 سانت (15mm)
+        teeth_count = 35         # تعداد دنده‌ها
+        rack_length = 50.0       # طول بخش دنده‌دار: 5 سانت (50mm)
+        top_bottom_margin = (total_length - rack_length) / 2  # حاشیه بالا و پایین
         
         # 1. ایجاد استوانه اصلی
-        cylinder = Part.makeCylinder(diameter/2, length)
+        cylinder = Part.makeCylinder(
+            diameter/2, 
+            total_length, 
+            FreeCAD.Vector(0,0,0), 
+            FreeCAD.Vector(0,0,1)
+        )
         
-        # 2. ایجاد برش دهنده برای سطح صاف
-        cutter = Part.makeBox(diameter*1.5, diameter*1.5, length*1.1,
-                            FreeCAD.Vector(-diameter*0.75, -diameter, -length*0.05))
+        # 2. ایجاد برش دهنده برای سطح صاف در مرکز
+        cutter = Part.makeBox(
+            diameter * 1.5,     # عرض
+            diameter * 0.6,     # عمق (کمتر از شعاع)
+            rack_length,         # ارتفاع دقیقاً به اندازه بخش دنده‌دار
+            FreeCAD.Vector(-diameter*0.75, -diameter*0.5, top_bottom_margin)
+        )
         
-        # 3. ایجاد استوانه با یک سطح صاف
+        # 3. ایجاد استوانه با سطح صاف در مرکز
         half_cylinder = cylinder.cut(cutter)
         
         # 4. محاسبات دنده‌ها
-        module = (math.pi * diameter) / teeth
-        tooth_height = 2.25 * module
+        circumference = math.pi * diameter
+        module = circumference / teeth_count
+        tooth_height = module * 1.5  # ارتفاع متوسط دنده‌ها
+        
+        # 5. ایجاد پروفیل دنده‌ها
+        profile_points = []
         tooth_space = math.pi * module
         
-        # 5. ایجاد پروفیل دنده‌ها (به روشی ساده‌تر)
-        profile = []
-        for i in range(teeth + 1):
+        for i in range(teeth_count + 1):
             x = i * tooth_space
-            profile.append(FreeCAD.Vector(x, -tooth_height/2, 0))
-            profile.append(FreeCAD.Vector(x, tooth_height/2, 0))
+            # نقاط پایین و بالا برای هر دنده
+            profile_points.append(FreeCAD.Vector(x, -tooth_height/2, 0))
+            profile_points.append(FreeCAD.Vector(x, tooth_height/2, 0))
         
         # 6. ایجاد شکل دنده‌ها
-        wire = Part.makePolygon(profile)
+        wire = Part.makePolygon(profile_points)
         face = Part.Face(wire)
-        rack = face.extrude(FreeCAD.Vector(0, 0, length))
+        rack_teeth = face.extrude(FreeCAD.Vector(0, 0, rack_length))
         
-        # 7. موقعیت دهی دنده‌ها روی سطح صاف
-        rack.translate(FreeCAD.Vector(-teeth*tooth_space/2, -diameter/2, 0))
+        # 7. موقعیت دهی دقیق دنده‌ها
+        rack_teeth.translate(FreeCAD.Vector(
+            -(teeth_count * tooth_space)/2,  # مرکز در محور X
+            -diameter/2,                    # روی سطح صاف
+            top_bottom_margin                # شروع از حاشیه پایین
+        ))
         
         # 8. ترکیب نهایی
-        final_gear = half_cylinder.fuse(rack)
+        final_gear = half_cylinder.fuse(rack_teeth)
         
         # 9. اضافه به سند
-        obj = doc.addObject("Part::Feature", "RackGear")
+        obj = doc.addObject("Part::Feature", "PrecisionRackGear")
         obj.Shape = final_gear
         
-        # تنظیمات نمایش
+        # 10. بهبود نمایش
         FreeCADGui.ActiveDocument.activeView().viewAxonometric()
         FreeCADGui.SendMsgToActiveView("ViewFit")
-        FreeCADGui.ActiveDocument.activeView().setDrawStyle("Shaded")
+        obj.ViewObject.ShapeColor = (0.3, 0.7, 0.5)  # رنگ سبز-آبی
         
         return obj
     
@@ -60,4 +79,5 @@ def create_rack_gear():
         FreeCAD.Console.PrintError(f"خطا: {str(e)}\n")
         return None
 
-create_rack_gear()
+# اجرای تابع
+create_precision_rack()
