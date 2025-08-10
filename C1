@@ -1,42 +1,50 @@
 import FreeCAD
+import FreeCADGui
 import Part
-import InvoluteGearFeature
+import math
 
 def create_rack_gear():
+    doc = FreeCAD.newDocument("RackGear")
+    
     # پارامترهای طراحی
     length = 80.0    # طول 80mm (8cm)
     width = 12.0     # عرض 12mm (1.2cm)
     teeth = 25       # تعداد دنده‌ها
     pressure_angle = 20.0  # زاویه فشار
+    module = width / teeth
     
-    doc = FreeCAD.newDocument("RackGear")
+    # 1. ایجاد پروفیل دنده شانه ای
+    rack_profile = []
+    tooth_space = math.pi * module
+    tooth_height = 2.25 * module
     
-    # ایجاد چرخ دنده شانه ای
-    rack = doc.addObject("Part::FeaturePython", "RackGear")
-    InvoluteGearFeature.InvoluteRack(rack)
-    rack.NumberOfTeeth = teeth
-    rack.Module = width / teeth
-    rack.PressureAngle = pressure_angle
-    rack.Height = length
-    rack.Thickness = width
+    for i in range(teeth):
+        x = i * tooth_space
+        # اضافه کردن نقاط برای یک دنده
+        rack_profile.append(FreeCAD.Vector(x, -tooth_height/2, 0))
+        rack_profile.append(FreeCAD.Vector(x, tooth_height/2, 0))
+        rack_profile.append(FreeCAD.Vector(x + tooth_space/2, tooth_height/2, 0))
+        rack_profile.append(FreeCAD.Vector(x + tooth_space/2, -tooth_height/2, 0))
     
-    # ایجاد استوانه پایه
-    cylinder = doc.addObject("Part::Cylinder", "BaseCylinder")
-    cylinder.Radius = width / 2
-    cylinder.Height = length
+    # بستن پروفیل
+    rack_profile.append(rack_profile[0])
     
-    # ترکیب قطعات
-    rack.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(0, 0, 0))
-    cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(90, 0, 0))
+    # ایجاد شکل سیمی
+    wire = Part.makePolygon(rack_profile)
+    face = Part.Face(wire)
+    rack = face.extrude(FreeCAD.Vector(0, 0, length))
     
-    fused = doc.addObject("Part::Fuse", "FusedRack")
-    fused.Base = rack
-    fused.Tool = cylinder
+    # 2. ایجاد استوانه پایه
+    cylinder = Part.makeCylinder(width/2, length)
+    cylinder.translate(FreeCAD.Vector(0, 0, 0))
     
-    # تنظیمات نمایش
-    rack.ViewObject.Visibility = False
-    cylinder.ViewObject.Visibility = False
-    fused.ViewObject.ShapeColor = (0.8, 0.2, 0.0)  # رنگ نارنجی
+    # 3. ترکیب قطعات
+    final_rack = rack.fuse(cylinder)
+    
+    # اضافه کردن به سند
+    obj = doc.addObject("Part::Feature", "RackGear")
+    obj.Shape = final_rack
+    obj.ViewObject.ShapeColor = (0.8, 0.2, 0.0)
     
     doc.recompute()
     FreeCADGui.SendMsgToActiveView("ViewFit")
