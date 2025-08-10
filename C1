@@ -4,89 +4,65 @@ import Part
 import math
 
 def create_cylindrical_rack():
-    # ایجاد یک سند جدید
-    doc = FreeCAD.newDocument("CylindricalRack")
-    
-    # پارامترهای طراحی
-    cylinder_length = 80.0    # طول استوانه (mm)
-    cylinder_diameter = 12.0  # قطر استوانه (mm)
-    teeth_count = 25          # تعداد دنده‌ها
-    pressure_angle = 20       # زاویه فشار (درجه)
-    
-    # 1. ایجاد استوانه اصلی
-    cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
-    cylinder.Radius = cylinder_diameter / 2
-    cylinder.Height = cylinder_length
-    cylinder.Angle = 360.0  # استوانه کامل
-    
-    # 2. ایجاد مکعب برش دهنده برای صاف کردن یک طرف
-    cutter = doc.addObject("Part::Box", "CutterBox")
-    cutter.Length = cylinder_diameter * 1.5
-    cutter.Width = cylinder_diameter * 1.5
-    cutter.Height = cylinder_length * 1.1  # کمی بلندتر از استوانه
-    
-    # موقعیت دهی مکعب برش دهنده
-    cutter.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(-cylinder_diameter*0.75, -cylinder_diameter, -cylinder_length*0.05),
-        FreeCAD.Rotation(0, 0, 0)
-    )
-    
-    # 3. برش استوانه برای ایجاد سطح صاف
-    cut_cylinder = doc.addObject("Part::Cut", "CutCylinder")
-    cut_cylinder.Base = cylinder
-    cut_cylinder.Tool = cutter
-    
-    # 4. محاسبات دنده‌های شانه ای
-    module = (math.pi * cylinder_diameter) / teeth_count
-    tooth_height = 2.25 * module
-    tooth_space = math.pi * module
-    
-    # ایجاد پروفیل دنده‌ها
-    points = []
-    for i in range(teeth_count + 1):  # +1 برای بستن شکل
-        x = i * tooth_space
-        y_bottom = -tooth_height/2
-        y_top = tooth_height/2
+    try:
+        # ایجاد سند جدید
+        doc = FreeCAD.newDocument("CylindricalRack")
         
-        if i < teeth_count:
-            points.append(FreeCAD.Vector(x, y_bottom, 0))
-            points.append(FreeCAD.Vector(x, y_top, 0))
-            points.append(FreeCAD.Vector(x + tooth_space/2, y_top, 0))
-            points.append(FreeCAD.Vector(x + tooth_space/2, y_bottom, 0))
+        # پارامترهای طراحی
+        length = 80.0    # طول (mm)
+        diameter = 12.0  # قطر (mm)
+        teeth = 25       # تعداد دنده‌ها
+        
+        # 1. ایجاد استوانه اصلی با روش جایگزین
+        circle = Part.makeCircle(diameter/2, FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1))
+        wire = Part.Wire([circle])
+        face = Part.Face(wire)
+        cylinder = face.extrude(FreeCAD.Vector(0,0,length))
+        
+        # 2. ایجاد مکعب برش دهنده
+        cutter = Part.makeBox(diameter*1.5, diameter*1.5, length*1.1,
+                            FreeCAD.Vector(-diameter*0.75, -diameter, -length*0.05))
+        
+        # 3. برش استوانه
+        half_cylinder = cylinder.cut(cutter)
+        
+        # 4. ایجاد دنده‌های شانه ای
+        module = (math.pi * diameter) / teeth
+        tooth_height = 2.25 * module
+        
+        # ایجاد پروفیل دنده‌ها
+        points = []
+        for i in range(teeth + 1):
+            x = i * math.pi * module
+            points.append(FreeCAD.Vector(x, -tooth_height/2, 0))
+            points.append(FreeCAD.Vector(x, tooth_height/2, 0))
+            if i < teeth:
+                points.append(FreeCAD.Vector(x + math.pi*module/2, tooth_height/2, 0))
+                points.append(FreeCAD.Vector(x + math.pi*module/2, -tooth_height/2, 0))
+        
+        wire = Part.makePolygon(points)
+        face = Part.Face(wire)
+        rack_teeth = face.extrude(FreeCAD.Vector(0,0,length))
+        
+        # جابجایی دنده‌ها
+        rack_teeth.translate(FreeCAD.Vector(-(teeth * math.pi * module)/2, -diameter/2, 0))
+        
+        # 5. ترکیب نهایی
+        final_shape = half_cylinder.fuse(rack_teeth)
+        
+        # اضافه به سند
+        obj = doc.addObject("Part::Feature", "CylindricalRack")
+        obj.Shape = final_shape
+        
+        # تنظیمات نمایش
+        FreeCADGui.ActiveDocument.activeView().viewAxonometric()
+        FreeCADGui.SendMsgToActiveView("ViewFit")
+        
+        return obj
     
-    # ایجاد شکل دنده‌ها
-    wire = Part.makePolygon(points)
-    face = Part.Face(wire)
-    teeth = face.extrude(FreeCAD.Vector(0, 0, cylinder_length))
-    
-    # ایجاد شیء Part برای دنده‌ها
-    teeth_obj = doc.addObject("Part::Feature", "RackTeeth")
-    teeth_obj.Shape = teeth
-    
-    # جابجایی دنده‌ها به محل صحیح
-    teeth_obj.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(-(teeth_count * tooth_space)/2, -cylinder_diameter/2, 0),
-        FreeCAD.Rotation(0, 0, 0)
-    )
-    
-    # 5. ترکیب استوانه با دنده‌ها
-    final_gear = doc.addObject("Part::Fuse", "FinalGear")
-    final_gear.Base = cut_cylinder
-    final_gear.Tool = teeth_obj
-    
-    # تنظیمات نمایش
-    cylinder.ViewObject.Visibility = False
-    cutter.ViewObject.Visibility = False
-    cut_cylinder.ViewObject.Visibility = False
-    teeth_obj.ViewObject.Visibility = False
-    
-    final_gear.ViewObject.ShapeColor = (0.8, 0.4, 0.0)  # رنگ نارنجی
-    
-    # محاسبه مجدد و نمایش
-    doc.recompute()
-    FreeCADGui.SendMsgToActiveView("ViewFit")
-    
-    return final_gear
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Error: {str(e)}\n")
+        return None
 
 # اجرای تابع
-gear = create_cylindrical_rack()
+create_cylindrical_rack()
