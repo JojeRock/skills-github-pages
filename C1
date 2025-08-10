@@ -1,0 +1,44 @@
+import FreeCAD
+import Part
+import InvoluteGearFeature
+
+def create_rack_gear():
+    # پارامترهای طراحی
+    length = 80.0    # طول 80mm (8cm)
+    width = 12.0     # عرض 12mm (1.2cm)
+    teeth = 25       # تعداد دنده‌ها
+    pressure_angle = 20.0  # زاویه فشار
+    
+    doc = FreeCAD.newDocument("RackGear")
+    
+    # ایجاد چرخ دنده شانه ای
+    rack = doc.addObject("Part::FeaturePython", "RackGear")
+    InvoluteGearFeature.InvoluteRack(rack)
+    rack.NumberOfTeeth = teeth
+    rack.Module = width / teeth
+    rack.PressureAngle = pressure_angle
+    rack.Height = length
+    rack.Thickness = width
+    
+    # ایجاد استوانه پایه
+    cylinder = doc.addObject("Part::Cylinder", "BaseCylinder")
+    cylinder.Radius = width / 2
+    cylinder.Height = length
+    
+    # ترکیب قطعات
+    rack.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(0, 0, 0))
+    cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(90, 0, 0))
+    
+    fused = doc.addObject("Part::Fuse", "FusedRack")
+    fused.Base = rack
+    fused.Tool = cylinder
+    
+    # تنظیمات نمایش
+    rack.ViewObject.Visibility = False
+    cylinder.ViewObject.Visibility = False
+    fused.ViewObject.ShapeColor = (0.8, 0.2, 0.0)  # رنگ نارنجی
+    
+    doc.recompute()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+create_rack_gear()
