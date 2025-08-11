@@ -1,49 +1,41 @@
-import FreeCAD as App
+import FreeCAD
 import Part
+import Draft
 import math
 
-# پارامترهای اصلی
-cylinder_diameter = 15.0  # mm (1.5 cm)
-cylinder_radius = cylinder_diameter / 2.0
-cylinder_length = 80.0  # mm (8 cm)
-module = 1.0  # ماژول دنده‌ها (mm)
-pressure_angle = 20.0  # زاویه فشار (درجه)
+# تنظیمات اولیه
+length = 80.0  # طول استوانه بر حسب میلی‌متر (8 سانت)
+radius = 7.5  # شعاع استوانه بر حسب میلی‌متر (قطر 15mm → شعاع 7.5mm)
+tooth_depth = 1.0  # عمق دندانه بر حسب میلی‌متر
+tooth_width = 2.0  # عرض دندانه بر حسب میلی‌متر (اختیاری، می‌توانید تغییر دهید)
+num_teeth = 20  # تعداد دندانه‌ها (اختیاری)
 
-# محاسبات دنده‌ها
-pitch = module * math.pi  # گام دنده‌ها (mm)
-num_teeth = int(cylinder_length / pitch)  # تعداد دنده‌ها در طول استوانه
+# ایجاد استوانهٔ پایه
+cylinder = Part.makeCylinder(radius, length)
 
-# ایجاد استوانه اصلی
-cylinder = Part.makeCylinder(cylinder_radius, cylinder_length)
-
-# ایجاد یک جعبه برای برش ربع استوانه
-cut_box = Part.makeBox(cylinder_radius, cylinder_radius, cylinder_length)
-
-# جابجایی جعبه به لبه استوانه و چرخش 45 درجه برای برش یک ربع
-cut_box.translate(App.Vector(0, -cylinder_radius, 0))
-cut_box.rotate(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 45)
-
-# برش ربع استوانه
-quarter_cylinder = cylinder.cut(cut_box)
-
-# ایجاد دنده‌های شانه‌ای روی سطح صاف
+# ایجاد دندانه‌ها (به صورت پروفیل دندانه‌های ساده)
 teeth = []
 for i in range(num_teeth):
-    # مختصات هر دنده
-    x_start = i * pitch
-    tooth = Part.makeBox(
-        pitch,  # طول دنده
-        cylinder_radius * 0.5,  # عمق دنده (نصف شعاع)
-        module * 2.25,  # ارتفاع دنده (طبق استاندارد ماژول)
-        App.Vector(x_start, -cylinder_radius, 0),  # موقعیت شروع
-    )
+    angle = 2 * math.pi * i / num_teeth  # زاویه در رادیان
+    x1 = radius * math.cos(angle)
+    y1 = radius * math.sin(angle)
+    x2 = (radius + tooth_depth) * math.cos(angle)
+    y2 = (radius + tooth_depth) * math.sin(angle)
+    
+    # ایجاد خطوط برای دندانه (به شکل مثلث ساده)
+    tooth_edge = Part.makeLine((x1, y1, 0), (x2, y2, 0))
+    tooth_edge2 = Part.makeLine((x2, y2, 0), (x1, y1, length))
+    tooth_edge3 = Part.makeLine((x1, y1, length), (x1, y1, 0))
+    
+    wire = Part.Wire([tooth_edge, tooth_edge2, tooth_edge3])
+    face = Part.Face(wire)
+    tooth = face.extrude(FreeCAD.Vector(0, 0, length))
     teeth.append(tooth)
 
-# ترکیب همه دنده‌ها
-rack_teeth = Part.makeCompound(teeth)
+# ترکیب دندانه‌ها با استوانه
+gear = cylinder
+for tooth in teeth:
+    gear = gear.fuse(tooth)
 
-# ادغام دنده‌ها با ربع استوانه
-final_part = quarter_cylinder.fuse(rack_teeth)
-
-# نمایش قطعه در FreeCAD
-Part.show(final_part, "Cylindrical_Rack_Gear")
+# نمایش در FreeCAD
+Part.show(gear)
