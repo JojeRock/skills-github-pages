@@ -2,35 +2,41 @@ import FreeCAD
 import Part
 import math
 
-# پارامترهای چرخدنده
-length = 80.0  # طول استوانه (محور Z)
-radius = 7.5  # شعاع استوانه (mm)
-tooth_depth = 1.0  # عمق دندانه (mm)
-tooth_width = 4.0  # عرض هر دندانه (mm)
-num_teeth = 16  # تعداد دندانه‌ها در محیط
+# ایجاد سند جدید
+doc = FreeCAD.newDocument("CylinderWithCut")
 
-# ایجاد استوانه پایه
+# پارامترهای استوانه
+diameter = 1.5  # قطر به سانتیمتر
+radius = diameter / 2
+length = 8.0    # طول به سانتیمتر
+cut_distance = 0.5  # فاصله برش از مرکز به سانتیمتر
+
+# ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length)
 
-# ایجاد دندانه‌های عرضی (موازی محور Y)
-for i in range(num_teeth):
-    # محاسبه موقعیت دندانه روی محیط
-    angle = 2 * math.pi * i / num_teeth
-    x_start = radius * math.cos(angle)
-    y_start = radius * math.sin(angle)
-    
-    # ایجاد مکعب برای دندانه (در راستای عرضی - محور Y)
-    tooth = Part.makeBox(
-        tooth_depth,  # طول در X (عمق دندانه)
-        tooth_width,  # طول در Y (عرض دندانه)
-        length,       # طول در Z (همانند استوانه)
-        FreeCAD.Vector(x_start, y_start - tooth_width/2, 0),  # نقطه شروع
-        FreeCAD.Vector(math.cos(angle), math.sin(angle), 0)  # جهت
-    )
-    
-    # اضافه کردن دندانه به استوانه
-    cylinder = cylinder.fuse(tooth)
+# ایجاد صفحه برش
+# صفحه برش باید موازی با محور Z باشد و در فاصله cut_distance از مرکز قرار گیرد
+cut_plane = Part.Plane()
+cut_plane.Axis = FreeCAD.Vector(1, 0, 0)  # جهت نرمال صفحه (محور X)
+cut_plane.Position = FreeCAD.Vector(cut_distance, 0, 0)  # موقعیت صفحه در امتداد محور X
 
-# نمایش نتیجه
-Part.show(cylinder)
-FreeCAD.ActiveDocument.recompute()
+# ایجاد یک جعبه بزرگ برای برش (بزرگتر از استوانه)
+box_size = diameter * 2
+cut_box = Part.makeBox(box_size, box_size, length * 2, 
+                      FreeCAD.Vector(-box_size/2, -box_size/2, -length/2))
+
+# تبدیل صفحه به وجه جامد برای برش
+cut_face = cut_plane.toShape()
+cut_solid = cut_box.common(cut_face)
+
+# برش استوانه
+cut_cylinder = cylinder.cut(cut_solid)
+
+# اضافه کردن شیء به سند
+cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
+cylinder_obj.Shape = cut_cylinder
+
+# تنظیم نمایش سه بعدی
+doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
+FreeCADGui.SendMsgToActiveView("ViewFit")
