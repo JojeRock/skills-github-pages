@@ -2,46 +2,45 @@ import FreeCAD
 import Part
 from FreeCAD import Base
 
-# 1. ایجاد سند جدید
-doc = FreeCAD.newDocument("FinalCorrectCutCylinder")
+doc = FreeCAD.newDocument("DirectCylinderPart")
 
-# 2. تنظیم پارامترها (همه مقادیر بر حسب میلیمتر)
+# پارامترها (مقیاس میلیمتر)
 total_diameter = 16.0
-total_radius = total_diameter / 2  # 8mm
+total_radius = total_diameter / 2
 cylinder_length = 80.0
-cut_distance_from_center = 5.0  # برش 5mm از مرکز به سمت راست
+cut_position = 5.0  # فاصله برش از مرکز
 
-# 3. محاسبه محدوده حذف
-# قسمت چپ باید از -8mm تا +5mm حذف شود (طول 13mm)
-delete_start = -total_radius  # -8mm (لبه چپ استوانه)
-delete_width = total_radius + cut_distance_from_center  # 8 + 5 = 13mm
+# محاسبه اندازه قسمت باقیمانده
+remaining_length = total_radius + cut_position  # 8 + 5 = 13mm
 
-# 4. ایجاد استوانه اصلی
-main_cylinder = Part.makeCylinder(
-    total_radius, 
-    cylinder_length, 
-    Base.Vector(0, 0, 0), 
-    Base.Vector(0, 0, 1)
+# 1. ایجاد کمان دایره برای مقطع
+circle = Part.Circle()
+circle.Radius = total_radius
+
+# 2. ایجاد کمان از 5mm تا لبه راست (180 درجه)
+arc = Part.ArcOfCircle(
+    circle,
+    -math.acos(cut_position/total_radius),  # زاویه شروع
+    math.acos(cut_position/total_radius)    # زاویه پایان
 )
 
-# 5. ایجاد جعبه حذف با ابعاد تضمینی
-delete_box = Part.makeBox(
-    delete_width,                   # عرض: 13mm
-    total_diameter * 1.5,           # ارتفاع: بزرگتر از قطر
-    cylinder_length * 1.5,          # طول: بزرگتر از طول استوانه
-    Base.Vector(delete_start,       # نقطه شروع X: -8mm
-                -total_radius * 1.5, # Y: پایین تر از مرکز
-                -cylinder_length * 0.5) # Z: قبل از شروع استوانه
-)
+# 3. ایجاد خط مستقیم برای برش
+edge1 = Part.LineSegment(
+    Base.Vector(cut_position, -math.sqrt(total_radius**2 - cut_position**2), 0),
+    Base.Vector(cut_position, math.sqrt(total_radius**2 - cut_position**2), 0)
+).toShape()
 
-# 6. عملیات حذف نهایی
-result = main_cylinder.cut(delete_box)
+# 4. ساخت مقطع
+wire = Part.Wire([arc.toShape(), edge1])
 
-# 7. ایجاد شیء نهایی
-final_object = doc.addObject("Part::Feature", "KeptRightPart")
-final_object.Shape = result
+# 5. اکسترود به طول استوانه
+final_shape = wire.extrude(Base.Vector(0, 0, cylinder_length))
 
-# 8. تنظیمات نمایش
+# اضافه کردن به سند
+obj = doc.addObject("Part::Feature", "FinalCylinderPart")
+obj.Shape = final_shape
+
+# تنظیمات نمایش
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
 doc.recompute()
