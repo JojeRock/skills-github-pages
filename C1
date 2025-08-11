@@ -1,4 +1,40 @@
-File "<input>", line 1
-    cylinder.Placement = FreeCAD.Placement(
-                                          ^
-SyntaxError: '(' was never closed
+import FreeCAD
+import Part
+
+# ایجاد سند جدید
+doc = FreeCAD.newDocument("CylinderWithCut")
+
+# پارامترهای مدل
+diameter = 16.0
+radius = diameter / 2.0
+length = 80.0
+cut_offset = 4.0
+
+# ایجاد استوانه اصلی (عمودی)
+cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
+cylinder.Radius = radius
+cylinder.Height = length
+# چرخش 90 درجه حول محور X برای عمودی کردن
+rot = FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90)
+cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rot)
+
+# ایجاد جعبه برش
+cut_box = doc.addObject("Part::Box", "CutBox")
+cut_box.Length = diameter * 2
+cut_box.Width = diameter
+cut_box.Height = length
+# موقعیت جعبه برش
+cut_box.Placement = FreeCAD.Placement(FreeCAD.Vector(-diameter, radius-cut_offset, 0), 
+                                   FreeCAD.Rotation())
+
+# ایجاد برش
+cut = doc.addObject("Part::Cut", "Cut")
+cut.Base = cylinder
+cut.Tool = cut_box
+
+# به روزرسانی نمایش
+doc.recompute()
+
+# تنظیم نمای مناسب
+FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+FreeCADGui.SendMsgToActiveView("ViewFit")
