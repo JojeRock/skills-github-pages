@@ -1,19 +1,20 @@
 import FreeCAD, FreeCADGui, Part, math
 from FreeCAD import Base
 
-def create_rack_gear():
+def create_precision_rack():
     try:
         # مدیریت سند
-        doc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument()
+        doc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("PrecisionRack")
         
-        # پارامترهای طراحی
-        MODULE = 0.8  # کاهش مدول برای جلوگیری از تداخل
-        GEAR_LENGTH = 60.0
-        GEAR_WIDTH = 12.0
-        GEAR_THICKNESS = 5.0  # ضخامت دندانه‌ها
-        
-        # 1. ساخت استوانه و برش آن
-        cylinder = doc.addObject("Part::Cylinder", "Cylinder")
+        # پارامترهای طراحی دقیق
+        MODULE = 1.0       # اندازه استاندارد دندانه
+        PRESSURE_ANGLE = math.radians(20)  # زاویه فشار 20 درجه
+        GEAR_LENGTH = 60.0 # طول 6 سانت
+        GEAR_WIDTH = 12.0  # عرض 1.2 سانت
+        GEAR_HEIGHT = 5.0  # ارتفاع دندانه‌ها
+
+        # 1. ساخت قطعه پایه (استوانه برش خورده)
+        cylinder = doc.addObject("Part::Cylinder", "BaseCylinder")
         cylinder.Height = 80.0
         cylinder.Radius = 8.0
         
@@ -23,64 +24,78 @@ def create_rack_gear():
         cutter.Height = 100.0
         cutter.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation())
         
-        cut_part = doc.addObject("Part::Cut", "CutPart")
-        cut_part.Base = cylinder
-        cut_part.Tool = cutter
+        base_part = doc.addObject("Part::Cut", "BasePart")
+        base_part.Base = cylinder
+        base_part.Tool = cutter
         doc.recompute()
 
-        # 2. ساخت چرخ دنده شانه‌ای با روش مطمئن‌تر
-        def make_rack_profile(length, module, thickness):
+        # 2. ساخت چرخ دنده شانه‌ای با دقت بالا
+        def make_precision_rack(length, width, height, module, pressure_angle):
+            # محاسبات دقیق پروفیل دندانه
+            pitch = math.pi * module
+            addendum = module
+            dedendum = 1.25 * module
+            tooth_thickness = pitch / 2
+            
             points = []
-            tooth_spacing = math.pi * module
-            num_teeth = int(length / tooth_spacing) + 1
+            num_teeth = int(math.ceil(length / pitch))
             
-            for i in range(num_teeth):
-                x = i * tooth_spacing
+            for i in range(num_teeth + 1):
+                x = i * pitch
+                # نقاط پروفیل دندانه (پایه تا نوک)
                 points.append(Base.Vector(x, 0, 0))
-                points.append(Base.Vector(x + tooth_spacing/2, 0, module))
-                points.append(Base.Vector(x + tooth_spacing, 0, 0))
+                points.append(Base.Vector(x + tooth_thickness/2, 0, addendum))
+                points.append(Base.Vector(x + tooth_thickness, 0, 0))
             
+            # ایجاد شکل نهایی
             wire = Part.makePolygon(points)
             face = Part.Face(wire)
-            return face.extrude(Base.Vector(0, thickness, 0))
+            return face.extrude(Base.Vector(0, width, 0))
 
-        rack_shape = make_rack_profile(GEAR_LENGTH, MODULE, GEAR_WIDTH)
-        rack = doc.addObject("Part::Feature", "RackGear")
+        rack_shape = make_precision_rack(
+            GEAR_LENGTH, GEAR_WIDTH, GEAR_HEIGHT, 
+            MODULE, PRESSURE_ANGLE
+        )
+        
+        rack = doc.addObject("Part::Feature", "PrecisionRack")
         rack.Shape = rack_shape
+        
+        # 3. قرارگیری دقیق روی سطح
+        # محاسبه مرکز هندسی سطح صاف
+        cut_face = base_part.Shape.Faces[0]  # سطح صاف برش خورده
+        center = cut_face.CenterOfMass
+        
+        # تنظیم موقعیت با دقت میکرون
         rack.Placement = Base.Placement(
-            Base.Vector(5, -GEAR_WIDTH/2, 40),
-            Base.Rotation(90, 0, 0),
+            Base.Vector(center.x, center.y - GEAR_WIDTH/2, center.z),
+            Base.Rotation(90, 0, 0),  # چرخش 90 درجه حول محور X
             Base.Vector(0, 0, 0)
         )
         doc.recompute()
 
-        # 3. ادغام با روش مرحله‌ای
-        # ابتدا بررسی تقاطع
-        common = cut_part.Shape.common(rack.Shape)
-        if common.Volume > 0:  # اگر تقاطع وجود دارد
-            # روش جایگزین: استفاده از Compound
-            final = doc.addObject("Part::Compound", "FinalGear")
-            final.Links = [cut_part, rack]
+        # 4. ادغام نهایی با روش مطمئن
+        # بررسی تماس دقیق سطوح
+        contact_check = rack.Shape.distToShape(base_part.Shape)
+        if contact_check[0] < 0.001:  # تماس با دقت 1 میکرون
+            final = doc.addObject("Part::Fuse", "FinalAssembly")
+            final.Base = base_part
+            final.Tool = rack
             
-            # مخفی کردن اجزاء
+            # مخفی کردن اجزاء موقت
             cylinder.ViewObject.Visibility = False
             cutter.ViewObject.Visibility = False
             rack.ViewObject.Visibility = False
             
             doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.ActiveDocument.ActiveView.fitAll()
+            FreeCADGui.ActiveDocument.ActiveView.fitAll()
             return final
         else:
-            raise ValueError("No intersection between parts")
+            raise ValueError("دندانه‌ها با سطح تماس ندارند")
 
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Error: {str(e)}\n")
-        # پاکسازی اشیاء مشکل‌دار
-        for obj in ['Cylinder', 'Cutter', 'CutPart', 'RackGear']:
-            if doc.getObject(obj):
-                doc.removeObject(obj)
-        doc.recompute()
+        FreeCAD.Console.PrintError(f"خطا: {str(e)}\n")
+        if 'doc' in locals():
+            doc.recompute()
         return None
 
-create_rack_gear()
+create_precision_rack()
