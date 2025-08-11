@@ -2,39 +2,46 @@ import FreeCAD
 import Part
 from FreeCAD import Base
 
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("PrecisionCutCylinder")
+def create_cut_cylinder():
+    # ایجاد سند جدید
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        doc = FreeCAD.newDocument("CutCylinderDoc")
+    
+    # پارامترهای طراحی
+    diameter = 16.0  # 1.6cm به میلیمتر
+    radius = diameter / 2
+    length = 80.0    # 8cm به میلیمتر
+    extra_cut = 4.0   # 4mm آنورتر از مرکز
+    
+    # محاسبه موقعیت برش
+    cut_position = radius + extra_cut  # 8 + 4 = 12mm از مرکز
+    
+    # ایجاد استوانه اصلی
+    cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
+    
+    # ایجاد ابزار برش (یک نیمه بینهایت)
+    # روش مطمئن‌تر: استفاده از یک جعبه بزرگ به عنوان نیمفضا
+    cut_tool = Part.makeBox(100, 100, length*2,
+                          Base.Vector(cut_position, -50, -length))
+    
+    # اعمال برش
+    cut_cylinder = cylinder.cut(cut_tool)
+    
+    # بررسی نتیجه
+    if cut_cylinder.Volume == cylinder.Volume:
+        FreeCAD.Console.PrintError("برش انجام نشد! بررسی پارامترها\n")
+        return
+    
+    # اضافه کردن به سند
+    obj = doc.addObject("Part::Feature", "CutCylinder")
+    obj.Shape = cut_cylinder
+    
+    # تنظیمات نمایش
+    FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
+    FreeCADGui.SendMsgToActiveView("ViewFit")
+    doc.recompute()
+    
+    FreeCAD.Console.PrintMessage(f"استوانه با برش {extra_cut}mm آنورتر از مرکز ایجاد شد\n")
 
-# پارامترهای استوانه
-diameter = 16.0  # قطر به میلی‌متر (1.6 سانت)
-radius = diameter / 2  # 8mm
-length = 80.0    # طول به میلی‌متر (8 سانت)
-extra_offset = 4.0  # 4 میلی‌متر آن‌سوتر از مرکز
-total_offset = radius + extra_offset  # 8 + 4 = 12mm از مرکز
-
-# ایجاد استوانه اصلی
-cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
-
-# ایجاد ابزار برش با دقت بالا
-cut_thickness = 0.01  # ضخامت بسیار نازک برای دقت
-cut_height = length * 1.5  # ارتفاع بیشتر از استوانه
-cut_width = diameter * 3   # عرض کافی
-cut_box = Part.makeBox(cut_thickness, cut_width, cut_height,
-                      Base.Vector(total_offset - cut_thickness, 
-                                 -cut_width/2, 
-                                 -cut_height/2))
-
-# انجام عملیات برش
-final_shape = cylinder.cut(cut_box)
-
-# اضافه کردن به سند
-result_obj = doc.addObject("Part::Feature", "Cylinder_4mmOffsetCut")
-result_obj.Shape = final_shape
-
-# بهینه‌سازی نمایش
-FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
-FreeCADGui.SendMsgToActiveView("ViewFit")
-doc.recompute()
-
-print(f"استوانه با قطر {diameter}mm و طول {length}mm ایجاد شد")
-print(f"برش از {total_offset}mm از مرکز انجام شد (شعاع: {radius}mm + اضافه: {extra_offset}mm)")
+create_cut_cylinder()
