@@ -9,17 +9,17 @@ doc = FreeCAD.newDocument("PreciseCutCylinder")
 diameter = 16.0    # قطر به میلی‌متر
 radius = diameter / 2
 length = 80.0      # طول به میلی‌متر
-cut_offset = 5.0   # فاصله برش از مرکز (5mm از وسط)
+cut_offset = 5.0    # فاصله برش از مرکز (5mm از وسط)
 
 # ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد جعبه برای قسمت مورد نظر (سمت راست)
-right_box = Part.makeBox(diameter, diameter, length,
-                        Base.Vector(cut_offset, -radius, 0))
+# ایجاد جعبه برای قسمت سمت چپ که می‌خواهیم نگه داریم
+left_box = Part.makeBox(cut_offset, diameter, length,
+                      Base.Vector(-radius, -radius, 0))
 
-# گرفتن اشتراک استوانه با جعبه سمت راست
-final_result = cylinder.common(right_box)
+# گرفتن اشتراک استوانه با جعبه سمت چپ
+final_result = cylinder.common(left_box)
 
 # اضافه کردن شیء به سند
 cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
