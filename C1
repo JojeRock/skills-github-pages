@@ -1,11 +1,10 @@
 import FreeCAD, Part, PartDesign
 from FreeCAD import Base
-import InvoluteGear  # ماژول مخصوص ساخت چرخ‌دنده
+import InvoluteGear
 
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("GearCutCylinder")
+doc = FreeCAD.ActiveDocument
 
-# --- مرحله ۱: ساخت استوانه و برش آن (مانند قبل) ---
+# ساخت استوانه و برش آن (همانند قبل)
 cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
 cylinder.Height = 80.0
 cylinder.Radius = 8.0
@@ -17,28 +16,42 @@ cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation(0, 0
 cut_result = doc.addObject("Part::Cut", "CutResult")
 cut_result.Base = cylinder
 cut_result.Tool = cut_tool
-cut_tool.ViewObject.Visibility = False
-cylinder.ViewObject.Visibility = False
+doc.recompute()
 
-# --- مرحله ۲: ساخت چرخ‌دنده استاندارد ---
+# ساخت چرخ دنده با تنظیمات دقیقتر
 gear = doc.addObject("Part::FeaturePython", "InvoluteGear")
-InvoluteGear._InvoluteGear(gear)  # استفاده از ماژول InvoluteGear
-gear.NumberOfTeeth = 10          # تعداد دندانه‌ها
-gear.Modules = '1.0 mm'          # مدول چرخ‌دنده (استاندارد)
-gear.PressureAngle = '20 deg'    # زاویه فشار (استاندارد ISO)
-gear.Reversed = False            # جهت دندانه‌ها
+InvoluteGear._InvoluteGear(gear)
+gear.NumberOfTeeth = 10
+gear.Modules = '0.5 mm'  # کاهش مدول برای تناسب با اندازه قطعه
+gear.PressureAngle = '20 deg'
 gear.Placement = Base.Placement(
-    Base.Vector(5, 0, 40),       # قرارگیری چرخ‌دنده روی سطح برش‌خورده (مرکز Z=40)
-    Base.Rotation(0, 90, 0),     # چرخش ۹۰ درجه حول محور Y برای قرارگیری عمود بر سطح
+    Base.Vector(5, 0, 40),
+    Base.Rotation(0, 90, 0),
     Base.Vector(0, 0, 0)
 )
-
-# --- مرحله ۳: ادغام چرخ‌دنده با قطعه اصلی (Fusion) ---
-fused_gear = doc.addObject("Part::Fuse", "GearFusion")
-fused_gear.Base = cut_result
-fused_gear.Tool = gear
-gear.ViewObject.Visibility = False  # مخفی کردن چرخ‌دنده اولیه
-
-# محاسبه مجدد سند
 doc.recompute()
+
+# بررسی هندسه قبل از ادغام
+if cut_result.Shape.isValid() and gear.Shape.isValid():
+    # ایجاد یک Part::Compound موقت برای بررسی برخورد
+    temp_compound = doc.addObject("Part::Compound", "TempCompound")
+    temp_compound.Links = [cut_result, gear]
+    doc.recompute()
+    
+    # اگر Compound ساخته شد، ادامه می‌دهیم
+    if temp_compound.Shape.isValid():
+        # ادغام با استفاده از Part::MultiFuse
+        fused_gear = doc.addObject("Part::MultiFuse", "GearFusion")
+        fused_gear.Shapes = [cut_result, gear]
+        doc.recompute()
+        
+        # مخفی کردن اشیاء موقت
+        temp_compound.ViewObject.Visibility = False
+        gear.ViewObject.Visibility = False
+        cut_result.ViewObject.Visibility = False
+    else:
+        FreeCAD.Console.PrintError("Error: Objects cannot be combined in a compound\n")
+else:
+    FreeCAD.Console.PrintError("Error: Invalid geometry in input objects\n")
+
 FreeCADGui.ActiveDocument.ActiveView.fitAll()
