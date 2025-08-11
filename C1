@@ -9,20 +9,21 @@ doc = FreeCAD.newDocument("PreciseCutCylinder")
 diameter = 16.0    # قطر به میلی‌متر
 radius = diameter / 2
 length = 80.0      # طول به میلی‌متر
-cut_offset = 5.0   # فاصله برش از مرکز (5mm از وسط)
+cut_position = 5.0  # موقعیت برش از مرکز (5mm از وسط)
 
 # ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد جعبه برای قسمت سمت چپ که می‌خواهیم حذف شود
-Right_box = Part.makeBox(cut_offset + radius, diameter, length,
-                       Base.Vector(-radius, -radius, 0))
+# ایجاد جعبه حذف برای قسمت سمت چپ (کوچکتر)
+# این جعبه از -radius شروع می‌شود تا cut_position ادامه دارد
+delete_box = Part.makeBox(cut_position + radius, diameter, length,
+                        Base.Vector(-radius, -radius, 0))
 
-# حذف قسمت سمت چپ با عملیات cut
-final_result = cylinder.cut(Right_box)
+# حذف قسمت سمت چپ
+final_result = cylinder.cut(delete_box)
 
 # اضافه کردن شیء به سند
-cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
+cylinder_obj = doc.addObject("Part::Feature", "RightCylinderPart")
 cylinder_obj.Shape = final_result
 
 # تنظیم نمایش
