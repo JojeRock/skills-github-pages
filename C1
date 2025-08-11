@@ -1,37 +1,44 @@
-import FreeCAD, Part, math
+import FreeCAD, Part, PartDesign
 from FreeCAD import Base
+import InvoluteGear  # ماژول مخصوص ساخت چرخ‌دنده
 
-# ایجاد یک سند جدید
-doc = FreeCAD.newDocument("CutCylinder")
+# ایجاد سند جدید
+doc = FreeCAD.newDocument("GearCutCylinder")
 
-# ساخت استوانه توپر (طول 80mm، قطر 16mm)
+# --- مرحله ۱: ساخت استوانه و برش آن (مانند قبل) ---
 cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
-cylinder.Height = 80.0  # 8 cm = 80 mm
-cylinder.Radius = 8.0   # قطر 1.6 cm = شعاع 8 mm
-cylinder.Placement = Base.Placement(Base.Vector(0, 0, 0), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
-
-# ساخت صفحه برش (با فاصله 5mm از مرکز)
-# صفحه به صورت عمودی و با offset 5mm در جهت X قرار می‌گیرد
-cut_plane = Part.Plane(Base.Vector(5, 0, 0), Base.Vector(1, 0, 0))
-
-# ایجاد یک جعبه (Box) بزرگ به عنوان ابزار برش
-# (بزرگ‌تر از استوانه باشد تا برش به درستی انجام شود)
+cylinder.Height = 80.0
+cylinder.Radius = 8.0
 cut_tool = doc.addObject("Part::Box", "CuttingTool")
 cut_tool.Length = 50.0
 cut_tool.Width = 50.0
 cut_tool.Height = 100.0
 cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
-
-# انجام عملیات برش
 cut_result = doc.addObject("Part::Cut", "CutResult")
 cut_result.Base = cylinder
 cut_result.Tool = cut_tool
-doc.recompute()
-
-# مخفی کردن ابزار برش و استوانه اصلی (اختیاری)
 cut_tool.ViewObject.Visibility = False
 cylinder.ViewObject.Visibility = False
 
-# نمایش نتیجه نهایی
-FreeCAD.ActiveDocument.recompute()
+# --- مرحله ۲: ساخت چرخ‌دنده استاندارد ---
+gear = doc.addObject("Part::FeaturePython", "InvoluteGear")
+InvoluteGear._InvoluteGear(gear)  # استفاده از ماژول InvoluteGear
+gear.NumberOfTeeth = 10          # تعداد دندانه‌ها
+gear.Modules = '1.0 mm'          # مدول چرخ‌دنده (استاندارد)
+gear.PressureAngle = '20 deg'    # زاویه فشار (استاندارد ISO)
+gear.Reversed = False            # جهت دندانه‌ها
+gear.Placement = Base.Placement(
+    Base.Vector(5, 0, 40),       # قرارگیری چرخ‌دنده روی سطح برش‌خورده (مرکز Z=40)
+    Base.Rotation(0, 90, 0),     # چرخش ۹۰ درجه حول محور Y برای قرارگیری عمود بر سطح
+    Base.Vector(0, 0, 0)
+)
+
+# --- مرحله ۳: ادغام چرخ‌دنده با قطعه اصلی (Fusion) ---
+fused_gear = doc.addObject("Part::Fuse", "GearFusion")
+fused_gear.Base = cut_result
+fused_gear.Tool = gear
+gear.ViewObject.Visibility = False  # مخفی کردن چرخ‌دنده اولیه
+
+# محاسبه مجدد سند
+doc.recompute()
 FreeCADGui.ActiveDocument.ActiveView.fitAll()
