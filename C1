@@ -3,54 +3,39 @@ import Part
 from FreeCAD import Base
 import math
 
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("PerfectCylinderPart")
+# تنظیمات دقیق بر اساس میلیمتر
+diameter = 16.0
+radius = diameter / 2
+length = 80.0
+cut_position = 5.0  # فاصله برش از مرکز
 
-# پارامترهای طراحی (مقیاس میلیمتر)
-diameter = 16.0       # قطر کامل
-radius = diameter / 2 # شعاع 8mm
-length = 80.0         # طول استوانه
-cut_from_center = 5.0 # فاصله برش از مرکز
+# محاسبات دقیق هندسی
+y = math.sqrt(radius**2 - cut_position**2)  # ارتفاع نقطه برش
 
-# 1. محاسبه نقاط کلیدی برای مقطع
-y = math.sqrt(radius**2 - cut_from_center**2) # محاسبه ارتفاع با قضیه فیثاغورث
-
-# 2. ایجاد نقاط مرزی:
-# نقاط شروع از 5mm بعد از مرکز به سمت راست
+# ایجاد نقاط کلیدی
 points = [
-    Base.Vector(cut_from_center, -y, 0),  # نقطه پایین سمت راست
-    Base.Vector(radius, 0, 0),            # انتهای راست مرکز
-    Base.Vector(cut_from_center, y, 0),   # نقطه بالا سمت راست
-    Base.Vector(cut_from_center, -y, 0)   # بستن مقطع
+    Base.Vector(cut_position, -y, 0),
+    Base.Vector(radius, 0, 0),
+    Base.Vector(cut_position, y, 0)
 ]
 
-# 3. ایجاد مقطع
-wire = Part.makePolygon(points)
-
-# 4. ایجاد کمان دایره برای قسمت منحنی
-circle = Part.Circle(Base.Vector(0,0,0), Base.Vector(0,0,1), radius)
-arc = Part.ArcOfCircle(
-    circle,
-    -math.asin(y/radius),  # زاویه شروع
-    math.asin(y/radius)    # زاویه پایان
-)
-
-# 5. ترکیب تمام لبه‌ها
-edges = [
+# ساخت مقطع با دقت بالا
+wire = Part.Wire([
     Part.LineSegment(points[0], points[1]).toShape(),
-    arc.toShape(),
-    Part.LineSegment(points[2], points[3]).toShape()
-]
-wire = Part.Wire(edges)
+    Part.ArcOfCircle(
+        Part.Circle(Base.Vector(0,0,0), Base.Vector(0,0,1), radius),
+        -math.asin(y/radius),
+        math.asin(y/radius)
+    ).toShape(),
+    Part.LineSegment(points[2], points[0]).toShape()
+])
 
-# 6. اکسترود به طول مورد نظر
+# ایجاد حجم نهایی
 solid = wire.extrude(Base.Vector(0, 0, length))
 
-# 7. ایجاد شیء نهایی
-obj = doc.addObject("Part::Feature", "CylinderRightPart")
+# نمایش نتیجه
+obj = FreeCAD.ActiveDocument.addObject("Part::Feature", "PerfectCylinderPart")
 obj.Shape = solid
-
-# تنظیمات نمایش
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
-doc.recompute()
+FreeCAD.ActiveDocument.recompute()
