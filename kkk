@@ -1,3 +1,9 @@
+  else:
+...         FreeCAD.Console.PrintError("Error: Objects cannot be combined in a compound\n")
+... else:
+...     FreeCAD.Console.PrintError("Error: Invalid geometry in input objects\n")
+... 
 Traceback (most recent call last):
   File "<input>", line 1, in <module>
-NameError: name 'cut_cylinder' is not defined
+ReferenceError: Cannot access attribute 'Shape' of deleted object
+>>> FreeCADGui.ActiveDocument.ActiveView.fitAll()
