@@ -3,52 +3,34 @@ import Part
 import math
 
 # پارامترهای چرخدنده
-module = 1.5  # اندازه ماژول (فاصله بین دندانه‌ها) - متناسب با قطر 15mm
-num_teeth = 10  # تعداد دندانه‌ها
-gear_length = 80.0  # طول چرخدنده (mm)
-pressure_angle = 20  # زاویه فشار (درجه)
+length = 80.0  # طول استوانه (محور Z)
+radius = 7.5  # شعاع استوانه (mm)
+tooth_depth = 1.0  # عمق دندانه (mm)
+tooth_width = 4.0  # عرض هر دندانه (mm)
+num_teeth = 16  # تعداد دندانه‌ها در محیط
 
-# محاسبات اولیه
-pitch_radius = (module * num_teeth) / 2
-base_radius = pitch_radius * math.cos(math.radians(pressure_angle))
+# ایجاد استوانه پایه
+cylinder = Part.makeCylinder(radius, length)
 
-# تابع ایجاد پروفیل یک دندانه (در صفحه XZ)
-def create_tooth_profile():
-    points = []
-    for i in range(21):
-        t = i / 20.0 * (math.pi / 2)
-        x = base_radius * (math.cos(t) + t * math.sin(t))
-        z = base_radius * (math.sin(t) - t * math.cos(t))
-        points.append(FreeCAD.Vector(x, 0, z))  # توجه: Y=0 (موازی محور Z)
-    
-    # ایجاد سیم (Wire) از نقاط
-    wire = Part.makePolygon(points)
-    return wire
-
-# ایجاد یک دندانه و اکسترود در جهت Y (عرض چرخدنده)
-tooth_profile = create_tooth_profile()
-tooth_face = Part.Face(tooth_profile)
-tooth_solid = tooth_face.extrude(FreeCAD.Vector(0, gear_length, 0))  # اکسترود در جهت Y
-
-# کپی و چرخش دندانه‌ها حول محور Z
-gear = None
+# ایجاد دندانه‌های عرضی (موازی محور Y)
 for i in range(num_teeth):
-    angle = 360.0 / num_teeth * i
-    rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), angle)
-    placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rotation)
+    # محاسبه موقعیت دندانه روی محیط
+    angle = 2 * math.pi * i / num_teeth
+    x_start = radius * math.cos(angle)
+    y_start = radius * math.sin(angle)
     
-    new_tooth = tooth_solid.copy()
-    new_tooth.Placement = placement
+    # ایجاد مکعب برای دندانه (در راستای عرضی - محور Y)
+    tooth = Part.makeBox(
+        tooth_depth,  # طول در X (عمق دندانه)
+        tooth_width,  # طول در Y (عرض دندانه)
+        length,       # طول در Z (همانند استوانه)
+        FreeCAD.Vector(x_start, y_start - tooth_width/2, 0),  # نقطه شروع
+        FreeCAD.Vector(math.cos(angle), math.sin(angle), 0)  # جهت
+    )
     
-    if gear is None:
-        gear = new_tooth
-    else:
-        gear = gear.fuse(new_tooth)
-
-# ایجاد هسته مرکزی (استوانه مرکزی)
-core_cylinder = Part.makeCylinder(pitch_radius - module, gear_length, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 1, 0))
-gear = gear.fuse(core_cylinder)
+    # اضافه کردن دندانه به استوانه
+    cylinder = cylinder.fuse(tooth)
 
 # نمایش نتیجه
-Part.show(gear)
+Part.show(cylinder)
 FreeCAD.ActiveDocument.recompute()
