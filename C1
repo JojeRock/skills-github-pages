@@ -1,40 +1,4 @@
-import FreeCAD
-import Part
-
-doc = FreeCAD.newDocument("CylinderWithCut")
-
-# پارامترهای استوانه
-diameter = 16.0
-radius = diameter / 2.0
-length = 80.0
-cut_offset = 4.0  # فاصله برش از مرکز
-
-# ایجاد استوانه اصلی (عمودی)
-cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
-cylinder.Radius = radius
-cylinder.Height = length
-cylinder.Placement = FreeCAD.Placement(
-    FreeCAD.Vector(0, 0, 0),
-    FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90
-)  # اینجا همه پرانتزها به درستی بسته شده‌اند
-
-# ایجاد جعبه برش
-cut_box = doc.addObject("Part::Box", "CutBox")
-cut_box.Length = diameter * 2
-cut_box.Width = diameter
-cut_box.Height = length
-cut_box.Placement = FreeCAD.Placement(
-    FreeCAD.Vector(-diameter, radius - cut_offset, 0),
-    FreeCAD.Rotation()
-)
-
-# عملیات برش
-cut = doc.addObject("Part::Cut", "Cut")
-cut.Base = cylinder
-cut.Tool = cut_box
-
-doc.recompute()
-
-# تنظیم نمای سه بعدی
-FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
-FreeCADGui.SendMsgToActiveView("ViewFit")
+File "<input>", line 1
+    cylinder.Placement = FreeCAD.Placement(
+                                          ^
+SyntaxError: '(' was never closed
