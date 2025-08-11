@@ -3,35 +3,38 @@ import Part
 from FreeCAD import Base
 
 # ایجاد سند جدید
-doc = FreeCAD.newDocument("OffsetCutCylinder")
+doc = FreeCAD.newDocument("PrecisionCutCylinder")
 
 # پارامترهای استوانه
-diameter = 15.0  # قطر به میلی‌متر (1.5 سانت)
-radius = diameter / 2
+diameter = 16.0  # قطر به میلی‌متر (1.6 سانت)
+radius = diameter / 2  # 8mm
 length = 80.0    # طول به میلی‌متر (8 سانت)
-additional_offset = 3.0  # 3 میلی‌متر آن‌سوتر از نیمه
-total_cut_offset = radius + additional_offset  # مجموعاً 10.5mm از مرکز
+extra_offset = 4.0  # 4 میلی‌متر آن‌سوتر از مرکز
+total_offset = radius + extra_offset  # 8 + 4 = 12mm از مرکز
 
 # ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد جعبه برش با دقت بالا
-cut_thickness = 0.1  # ضخامت برش 0.1mm برای دقت
-cut_height = length * 1.2  # ارتفاع بیشتر از طول استوانه
-cut_width = diameter * 2   # عرض کافی برای پوشش
+# ایجاد ابزار برش با دقت بالا
+cut_thickness = 0.01  # ضخامت بسیار نازک برای دقت
+cut_height = length * 1.5  # ارتفاع بیشتر از استوانه
+cut_width = diameter * 3   # عرض کافی
 cut_box = Part.makeBox(cut_thickness, cut_width, cut_height,
-                     Base.Vector(total_cut_offset - cut_thickness, -cut_width/2, -cut_height/2))
+                      Base.Vector(total_offset - cut_thickness, 
+                                 -cut_width/2, 
+                                 -cut_height/2))
 
-# انجام برش
-cut_cylinder = cylinder.cut(cut_box)
+# انجام عملیات برش
+final_shape = cylinder.cut(cut_box)
 
 # اضافه کردن به سند
-cyl_obj = doc.addObject("Part::Feature", "3mmOffsetCutCylinder")
-cyl_obj.Shape = cut_cylinder
+result_obj = doc.addObject("Part::Feature", "Cylinder_4mmOffsetCut")
+result_obj.Shape = final_shape
 
-# تنظیم نمایش
+# بهینه‌سازی نمایش
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
 doc.recompute()
 
-print(f"برش از {total_cut_offset}mm از مرکز انجام شد (نیمه: {radius}mm + اضافه: {additional_offset}mm)")
+print(f"استوانه با قطر {diameter}mm و طول {length}mm ایجاد شد")
+print(f"برش از {total_offset}mm از مرکز انجام شد (شعاع: {radius}mm + اضافه: {extra_offset}mm)")
