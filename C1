@@ -1,57 +1,87 @@
 import FreeCAD, Part, PartDesign
 from FreeCAD import Base
-import InvoluteGear
 
-doc = FreeCAD.ActiveDocument
+# ایجاد سند جدید (اگر وجود ندارد)
+if not FreeCAD.ActiveDocument:
+    doc = FreeCAD.newDocument("GearDesign")
+else:
+    doc = FreeCAD.ActiveDocument
 
-# ساخت استوانه و برش آن (همانند قبل)
+# ساخت استوانه اصلی
 cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
-cylinder.Height = 80.0
-cylinder.Radius = 8.0
+cylinder.Height = 80.0  # 8 cm
+cylinder.Radius = 8.0   # قطر 16mm
+cylinder.Placement = Base.Placement(Base.Vector(0,0,0), Base.Rotation(0,0,0), Base.Vector(0,0,0))
+
+# ساخت ابزار برش
 cut_tool = doc.addObject("Part::Box", "CuttingTool")
 cut_tool.Length = 50.0
 cut_tool.Width = 50.0
 cut_tool.Height = 100.0
-cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
+cut_tool.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation(0,0,0), Base.Vector(0,0,0))
+
+# انجام برش
 cut_result = doc.addObject("Part::Cut", "CutResult")
 cut_result.Base = cylinder
 cut_result.Tool = cut_tool
+
 doc.recompute()
 
-# ساخت چرخ دنده با تنظیمات دقیقتر
-gear = doc.addObject("Part::FeaturePython", "InvoluteGear")
-InvoluteGear._InvoluteGear(gear)
-gear.NumberOfTeeth = 10
-gear.Modules = '0.5 mm'  # کاهش مدول برای تناسب با اندازه قطعه
-gear.PressureAngle = '20 deg'
-gear.Placement = Base.Placement(
-    Base.Vector(5, 0, 40),
-    Base.Rotation(0, 90, 0),
-    Base.Vector(0, 0, 0)
-)
-doc.recompute()
+# ساخت چرخ دنده (روش جایگزین)
+def make_gear(num_teeth=10, module=0.8, thickness=5.0):
+    gear = doc.addObject("Part::Feature", "CustomGear")
+    
+    # پارامترهای چرخ دنده
+    pitch_radius = (num_teeth * module) / 2.0
+    base_radius = pitch_radius * math.cos(math.radians(20))
+    
+    # ایجاد پروفیل دندانه
+    teeth = []
+    for i in range(num_teeth):
+        angle = 2 * math.pi * i / num_teeth
+        x = base_radius * math.cos(angle)
+        y = base_radius * math.sin(angle)
+        teeth.append(Base.Vector(x,y,0))
+    
+    # ایجاد شکل نهایی
+    wire = Part.makePolygon(teeth + [teeth[0]])
+    face = Part.Face(wire)
+    gear.Shape = face.extrude(Base.Vector(0,0,thickness))
+    return gear
 
-# بررسی هندسه قبل از ادغام
-if cut_result.Shape.isValid() and gear.Shape.isValid():
-    # ایجاد یک Part::Compound موقت برای بررسی برخورد
-    temp_compound = doc.addObject("Part::Compound", "TempCompound")
-    temp_compound.Links = [cut_result, gear]
+try:
+    gear = make_gear(num_teeth=12, module=0.6, thickness=8.0)
+    gear.Placement = Base.Placement(
+        Base.Vector(5,0,40),
+        Base.Rotation(0,90,0),
+        Base.Vector(0,0,0)
+    )
+    
     doc.recompute()
     
-    # اگر Compound ساخته شد، ادامه می‌دهیم
-    if temp_compound.Shape.isValid():
-        # ادغام با استفاده از Part::MultiFuse
-        fused_gear = doc.addObject("Part::MultiFuse", "GearFusion")
-        fused_gear.Shapes = [cut_result, gear]
-        doc.recompute()
-        
-        # مخفی کردن اشیاء موقت
-        temp_compound.ViewObject.Visibility = False
-        gear.ViewObject.Visibility = False
-        cut_result.ViewObject.Visibility = False
-    else:
-        FreeCAD.Console.PrintError("Error: Objects cannot be combined in a compound\n")
-else:
-    FreeCAD.Console.PrintError("Error: Invalid geometry in input objects\n")
+    # بررسی اعتبار هندسه
+    if not cut_result.Shape.isValid() or not gear.Shape.isValid():
+        raise ValueError("Invalid geometry detected")
+    
+    # ادغام با روش مطمئن
+    fused = doc.addObject("Part::MultiFuse", "FinalGear")
+    fused.Shapes = [cut_result, gear]
+    
+    # مخفی کردن اشیاء موقت
+    cylinder.ViewObject.Visibility = False
+    cut_tool.ViewObject.Visibility = False
+    gear.ViewObject.Visibility = False
+    
+    doc.recompute()
+    FreeCADGui.ActiveDocument.ActiveView.fitAll()
 
-FreeCADGui.ActiveDocument.ActiveView.fitAll()
+except Exception as e:
+    FreeCAD.Console.PrintError(f"Error: {str(e)}\n")
+    # پاکسازی اشیاء مشکل‌دار در صورت خطا
+    for obj in [cylinder, cut_tool, cut_result, gear]:
+        try:
+            if obj in doc.Objects:
+                doc.removeObject(obj.Name)
+        except:
+            pass
+    doc.recompute()
