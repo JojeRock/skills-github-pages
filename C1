@@ -1,44 +1,54 @@
 import FreeCAD
 import Part
 from FreeCAD import Base
+import math
 
-doc = FreeCAD.newDocument("DirectCylinderPart")
+# ایجاد سند جدید
+doc = FreeCAD.newDocument("PerfectCylinderPart")
 
-# پارامترها (مقیاس میلیمتر)
-total_diameter = 16.0
-total_radius = total_diameter / 2
-cylinder_length = 80.0
-cut_position = 5.0  # فاصله برش از مرکز
+# پارامترهای طراحی (مقیاس میلیمتر)
+diameter = 16.0       # قطر کامل
+radius = diameter / 2 # شعاع 8mm
+length = 80.0         # طول استوانه
+cut_from_center = 5.0 # فاصله برش از مرکز
 
-# محاسبه اندازه قسمت باقیمانده
-remaining_length = total_radius + cut_position  # 8 + 5 = 13mm
+# 1. محاسبه نقاط کلیدی برای مقطع
+y = math.sqrt(radius**2 - cut_from_center**2) # محاسبه ارتفاع با قضیه فیثاغورث
 
-# 1. ایجاد کمان دایره برای مقطع
-circle = Part.Circle()
-circle.Radius = total_radius
+# 2. ایجاد نقاط مرزی:
+# نقاط شروع از 5mm بعد از مرکز به سمت راست
+points = [
+    Base.Vector(cut_from_center, -y, 0),  # نقطه پایین سمت راست
+    Base.Vector(radius, 0, 0),            # انتهای راست مرکز
+    Base.Vector(cut_from_center, y, 0),   # نقطه بالا سمت راست
+    Base.Vector(cut_from_center, -y, 0)   # بستن مقطع
+]
 
-# 2. ایجاد کمان از 5mm تا لبه راست (180 درجه)
+# 3. ایجاد مقطع
+wire = Part.makePolygon(points)
+
+# 4. ایجاد کمان دایره برای قسمت منحنی
+circle = Part.Circle(Base.Vector(0,0,0), Base.Vector(0,0,1), radius)
 arc = Part.ArcOfCircle(
     circle,
-    -math.acos(cut_position/total_radius),  # زاویه شروع
-    math.acos(cut_position/total_radius)    # زاویه پایان
+    -math.asin(y/radius),  # زاویه شروع
+    math.asin(y/radius)    # زاویه پایان
 )
 
-# 3. ایجاد خط مستقیم برای برش
-edge1 = Part.LineSegment(
-    Base.Vector(cut_position, -math.sqrt(total_radius**2 - cut_position**2), 0),
-    Base.Vector(cut_position, math.sqrt(total_radius**2 - cut_position**2), 0)
-).toShape()
+# 5. ترکیب تمام لبه‌ها
+edges = [
+    Part.LineSegment(points[0], points[1]).toShape(),
+    arc.toShape(),
+    Part.LineSegment(points[2], points[3]).toShape()
+]
+wire = Part.Wire(edges)
 
-# 4. ساخت مقطع
-wire = Part.Wire([arc.toShape(), edge1])
+# 6. اکسترود به طول مورد نظر
+solid = wire.extrude(Base.Vector(0, 0, length))
 
-# 5. اکسترود به طول استوانه
-final_shape = wire.extrude(Base.Vector(0, 0, cylinder_length))
-
-# اضافه کردن به سند
-obj = doc.addObject("Part::Feature", "FinalCylinderPart")
-obj.Shape = final_shape
+# 7. ایجاد شیء نهایی
+obj = doc.addObject("Part::Feature", "CylinderRightPart")
+obj.Shape = solid
 
 # تنظیمات نمایش
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
