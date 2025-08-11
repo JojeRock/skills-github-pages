@@ -3,90 +3,84 @@ from FreeCAD import Base
 
 def create_rack_gear():
     try:
-        # ایجاد یا استفاده از سند موجود
-        if FreeCAD.ActiveDocument is None:
-            doc = FreeCAD.newDocument("GearDesign")
-        else:
-            doc = FreeCAD.ActiveDocument
-
+        # مدیریت سند
+        doc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument()
+        
         # پارامترهای طراحی
-        MODULE = 1.0  # اندازه مدول دندانه‌ها (استاندارد)
-        GEAR_LENGTH = 60.0  # 6 cm
-        GEAR_WIDTH = 12.0  # 1.2 cm
-        CYLINDER_HEIGHT = 80.0
-        CYLINDER_RADIUS = 8.0
+        MODULE = 0.8  # کاهش مدول برای جلوگیری از تداخل
+        GEAR_LENGTH = 60.0
+        GEAR_WIDTH = 12.0
+        GEAR_THICKNESS = 5.0  # ضخامت دندانه‌ها
+        
+        # 1. ساخت استوانه و برش آن
+        cylinder = doc.addObject("Part::Cylinder", "Cylinder")
+        cylinder.Height = 80.0
+        cylinder.Radius = 8.0
+        
+        cutter = doc.addObject("Part::Box", "Cutter")
+        cutter.Length = 50.0
+        cutter.Width = 50.0
+        cutter.Height = 100.0
+        cutter.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation())
+        
+        cut_part = doc.addObject("Part::Cut", "CutPart")
+        cut_part.Base = cylinder
+        cut_part.Tool = cutter
+        doc.recompute()
 
-        # ساخت استوانه اصلی
-        cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
-        cylinder.Height = CYLINDER_HEIGHT
-        cylinder.Radius = CYLINDER_RADIUS
+        # 2. ساخت چرخ دنده شانه‌ای با روش مطمئن‌تر
+        def make_rack_profile(length, module, thickness):
+            points = []
+            tooth_spacing = math.pi * module
+            num_teeth = int(length / tooth_spacing) + 1
+            
+            for i in range(num_teeth):
+                x = i * tooth_spacing
+                points.append(Base.Vector(x, 0, 0))
+                points.append(Base.Vector(x + tooth_spacing/2, 0, module))
+                points.append(Base.Vector(x + tooth_spacing, 0, 0))
+            
+            wire = Part.makePolygon(points)
+            face = Part.Face(wire)
+            return face.extrude(Base.Vector(0, thickness, 0))
 
-        # ساخت ابزار برش
-        cut_tool = doc.addObject("Part::Box", "CuttingTool")
-        cut_tool.Length = 50.0
-        cut_tool.Width = 50.0
-        cut_tool.Height = 100.0
-        cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation())
-
-        # انجام برش
-        cut_result = doc.addObject("Part::Cut", "CutCylinder")
-        cut_result.Base = cylinder
-        cut_result.Tool = cut_tool
-
-        # ساخت چرخ دنده شانه‌ای
+        rack_shape = make_rack_profile(GEAR_LENGTH, MODULE, GEAR_WIDTH)
         rack = doc.addObject("Part::Feature", "RackGear")
-        
-        # محاسبات دندانه‌ها
-        tooth_spacing = math.pi * MODULE
-        tooth_height = MODULE
-        num_teeth = int(GEAR_LENGTH / tooth_spacing)
-        
-        # ایجاد نقاط پروفیل
-        points = []
-        for i in range(num_teeth + 1):
-            x = i * tooth_spacing
-            points.append(Base.Vector(x, 0, 0))
-            points.append(Base.Vector(x + tooth_spacing/2, 0, tooth_height))
-            points.append(Base.Vector(x + tooth_spacing, 0, 0))
-        
-        # ایجاد شکل نهایی
-        wire = Part.makePolygon(points)
-        face = Part.Face(Part.Wire(wire))
-        rack.Shape = face.extrude(Base.Vector(0, GEAR_WIDTH, 0))
-        
-        # موقعیت‌دهی چرخ دنده
+        rack.Shape = rack_shape
         rack.Placement = Base.Placement(
             Base.Vector(5, -GEAR_WIDTH/2, 40),
             Base.Rotation(90, 0, 0),
             Base.Vector(0, 0, 0)
         )
-
-        # ادغام قطعات
-        final_part = doc.addObject("Part::Fuse", "FinalPart")
-        final_part.Base = cut_result
-        final_part.Tool = rack
-
-        # مخفی کردن اشیاء موقت
-        cylinder.ViewObject.Visibility = False
-        cut_tool.ViewObject.Visibility = False
-        rack.ViewObject.Visibility = False
-
-        # به‌روزرسانی و نمایش
         doc.recompute()
-        
-        if FreeCADGui.ActiveDocument is not None:
-            FreeCADGui.ActiveDocument.ActiveView.fitAll()
-        else:
-            FreeCAD.Console.PrintWarning("No 3D view available to fit\n")
 
-        FreeCAD.Console.PrintMessage("چرخ دنده شانه‌ای با موفقیت ایجاد شد!\n")
-        return final_part
+        # 3. ادغام با روش مرحله‌ای
+        # ابتدا بررسی تقاطع
+        common = cut_part.Shape.common(rack.Shape)
+        if common.Volume > 0:  # اگر تقاطع وجود دارد
+            # روش جایگزین: استفاده از Compound
+            final = doc.addObject("Part::Compound", "FinalGear")
+            final.Links = [cut_part, rack]
+            
+            # مخفی کردن اجزاء
+            cylinder.ViewObject.Visibility = False
+            cutter.ViewObject.Visibility = False
+            rack.ViewObject.Visibility = False
+            
+            doc.recompute()
+            if FreeCADGui.ActiveDocument:
+                FreeCADGui.ActiveDocument.ActiveView.fitAll()
+            return final
+        else:
+            raise ValueError("No intersection between parts")
 
     except Exception as e:
-        FreeCAD.Console.PrintError(f"خطا در اجرا: {str(e)}\n")
-        if 'doc' in locals():
-            doc.recompute()
+        FreeCAD.Console.PrintError(f"Error: {str(e)}\n")
+        # پاکسازی اشیاء مشکل‌دار
+        for obj in ['Cylinder', 'Cutter', 'CutPart', 'RackGear']:
+            if doc.getObject(obj):
+                doc.removeObject(obj)
+        doc.recompute()
         return None
 
-# اجرای تابع
 create_rack_gear()
