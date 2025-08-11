@@ -1,70 +1,41 @@
 import FreeCAD
 import Part
-from FreeCAD import Base
+import math
 
-def create_precise_cut_cylinder():
-    try:
-        # ایجاد سند
-        doc = FreeCAD.ActiveDocument
-        if doc is None:
-            doc = FreeCAD.newDocument("PreciseCutCylinder")
-        
-        # پارامترها (میلیمتر)
-        diameter = 16.0
-        radius = diameter / 2
-        length = 80.0
-        extra_cut = 4.0  # 4mm آنورتر از مرکز
-        
-        # محاسبه موقعیت برش
-        cut_pos = radius + extra_cut
-        
-        # روش مطمئن برای FreeCAD 1.0.1:
-        # 1. ایجاد استوانه اصلی
-        cylinder = Part.makeCylinder(radius, length)
-        
-        # 2. ایجاد یک مکعب به عنوان ابزار برش
-        # (بزرگتر از استوانه و در موقعیت دقیق)
-        cut_tool = Part.makeBox(100, 100, length*2,
-                              Base.Vector(cut_pos, -50, -length))
-        
-        # 3. انجام عملیات برش با روش جایگزین
-        # ابتدا اشتراک را پیدا می‌کنیم
-        common = cylinder.common(cut_tool)
-        
-        # سپس تفاضل می‌گیریم
-        result = cylinder.cut(common)
-        
-        # بررسی نتیجه
-        if result.isNull() or abs(result.Volume - cylinder.Volume) < 0.1:
-            raise Exception("برش انجام نشد - حجم تغییر نکرد")
-        
-        # اضافه به سند
-        obj = doc.addObject("Part::Feature", "4mmOffsetCylinder")
-        obj.Shape = result
-        
-        # نمایش ابزار برش برای دیباگ (اختیاری)
-        debug_tool = doc.addObject("Part::Feature", "Debug_CutTool")
-        debug_tool.Shape = cut_tool
-        debug_tool.ViewObject.Transparency = 85
-        debug_tool.ViewObject.Visibility = False
-        
-        # تنظیمات نمایش
-        FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
-        FreeCADGui.SendMsgToActiveView("ViewFit")
-        doc.recompute()
-        
-        FreeCAD.Console.PrintMessage("عملیات موفق! برش از {}mm از مرکز انجام شد\n".format(cut_pos))
-        return True
-    
-    except Exception as e:
-        FreeCAD.Console.PrintError("خطا: {}\n".format(str(e)))
-        FreeCAD.Console.PrintMessage("راهکارهای احتمالی:\n")
-        FreeCAD.Console.PrintMessage("1. تغییر نسخه FreeCAD به نسخه جدیدتر\n")
-        FreeCAD.Console.PrintMessage("2. امتحان کردن مقادیر مختلف برای cut_pos\n")
-        FreeCAD.Console.PrintMessage("3. بررسی visibility ابزار برش (Debug_CutTool)\n")
-        return False
+# ایجاد سند جدید
+doc = FreeCAD.newDocument("CylinderWithCut")
 
-# اجرای تابع
-success = create_precise_cut_cylinder()
-if not success:
-    FreeCAD.Console.PrintError("لطفاً مشکل را گزارش دهید\n")
+# پارامترهای استوانه
+diameter = 16.0  # قطر استوانه بر حسب میلیمتر
+radius = diameter / 2.0
+length = 80.0    # طول استوانه بر حسب میلیمتر
+cut_offset = 4.0  # فاصله برش از مرکز بر حسب میلیمتر
+
+# ایجاد استوانه اصلی
+cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
+cylinder.Radius = radius
+cylinder.Height = length
+cylinder.Angle = 360.0
+cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90))
+
+# ایجاد جعبه برش (برای ایجاد سطح صاف)
+cut_box = doc.addObject("Part::Box", "CutBox")
+cut_box.Length = diameter  # طول جعبه (بیشتر از قطر استوانه)
+cut_box.Width = diameter   # عرض جعبه
+cut_box.Height = length    # ارتفاع جعبه برابر طول استوانه
+
+# موقعیت دهی جعبه برش
+# جعبه را در فاصله cut_offset از مرکز قرار می‌دهیم
+cut_box.Placement = FreeCAD.Placement(FreeCAD.Vector(-diameter, radius - cut_offset, 0), FreeCAD.Rotation(FreeCAD.Vector(0,0,1), 0))
+
+# انجام عملیات برش
+cut = doc.addObject("Part::Cut", "Cut")
+cut.Base = cylinder
+cut.Tool = cut_box
+
+# نمایش مجدد
+doc.recompute()
+
+# نمایش در نمای سه بعدی
+FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+FreeCADGui.SendMsgToActiveView("ViewFit")
