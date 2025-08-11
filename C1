@@ -15,11 +15,11 @@ cut_offset = 5.0   # فاصله برش از مرکز (5mm از وسط)
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
 # ایجاد جعبه برای قسمت سمت چپ که می‌خواهیم حذف شود
-left_box = Part.makeBox(cut_offset + radius, diameter, length,
+Right_box = Part.makeBox(cut_offset + radius, diameter, length,
                        Base.Vector(-radius, -radius, 0))
 
 # حذف قسمت سمت چپ با عملیات cut
-final_result = cylinder.cut(left_box)
+final_result = cylinder.cut(Right_box)
 
 # اضافه کردن شیء به سند
 cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
