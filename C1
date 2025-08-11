@@ -1,58 +1,37 @@
-import FreeCAD
-import Part
+import FreeCAD, Part, math
 from FreeCAD import Base
-import math
 
-def create_cylinder_part():
-    # پارامترهای طراحی
-    diameter = 16.0       # قطر کامل بر حسب mm
-    radius = diameter / 2
-    length = 80.0         # طول قطعه
-    cut_from_center = 5.0 # فاصله برش از مرکز
-    
-    # محاسبه ارتفاع نقطه برش با دقت بالا
-    y = math.sqrt(radius**2 - cut_from_center**2)
-    
-    # 1. ساخت پروفیل مقطع
-    profile = Part.Shape([
-        # خط مستقیم سمت راست (از نقطه برش تا لبه)
-        Part.LineSegment(
-            Base.Vector(cut_from_center, -y, 0),
-            Base.Vector(radius, 0, 0)
-        ).toShape(),
-        
-        # کمان دایره (قسمت منحنی)
-        Part.ArcOfCircle(
-            Part.Circle(Base.Vector(0,0,0), Base.Vector(0,0,1), radius),
-            -math.asin(y/radius),
-            math.asin(y/radius)
-        ).toShape(),
-        
-        # خط مستقیم برگشت (از لبه بالا به نقطه برش)
-        Part.LineSegment(
-            Base.Vector(radius, 0, 0),
-            Base.Vector(cut_from_center, y, 0)
-        ).toShape(),
-        
-        # خط بستن مقطع
-        Part.LineSegment(
-            Base.Vector(cut_from_center, y, 0),
-            Base.Vector(cut_from_center, -y, 0)
-        ).toShape()
-    ])
-    
-    # 2. ایجاد سیم بسته
-    wire = Part.Wire(profile.Edges)
-    
-    # 3. اکسترود به طول مورد نظر
-    solid = wire.extrude(Base.Vector(0, 0, length))
-    
-    # 4. نمایش نتیجه
-    doc = FreeCAD.newDocument("FinalCylinderPart")
-    obj = doc.addObject("Part::Feature", "CylinderPart")
-    obj.Shape = solid
-    FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
-    FreeCADGui.SendMsgToActiveView("ViewFit")
-    doc.recompute()
+# ایجاد یک سند جدید
+doc = FreeCAD.newDocument("CutCylinder")
 
-create_cylinder_part()
+# ساخت استوانه توپر (طول 80mm، قطر 16mm)
+cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
+cylinder.Height = 80.0  # 8 cm = 80 mm
+cylinder.Radius = 8.0   # قطر 1.6 cm = شعاع 8 mm
+cylinder.Placement = Base.Placement(Base.Vector(0, 0, 0), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
+
+# ساخت صفحه برش (با فاصله 5mm از مرکز)
+# صفحه به صورت عمودی و با offset 5mm در جهت X قرار می‌گیرد
+cut_plane = Part.Plane(Base.Vector(5, 0, 0), Base.Vector(1, 0, 0))
+
+# ایجاد یک جعبه (Box) بزرگ به عنوان ابزار برش
+# (بزرگ‌تر از استوانه باشد تا برش به درستی انجام شود)
+cut_tool = doc.addObject("Part::Box", "CuttingTool")
+cut_tool.Length = 50.0
+cut_tool.Width = 50.0
+cut_tool.Height = 100.0
+cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
+
+# انجام عملیات برش
+cut_result = doc.addObject("Part::Cut", "CutResult")
+cut_result.Base = cylinder
+cut_result.Tool = cut_tool
+doc.recompute()
+
+# مخفی کردن ابزار برش و استوانه اصلی (اختیاری)
+cut_tool.ViewObject.Visibility = False
+cylinder.ViewObject.Visibility = False
+
+# نمایش نتیجه نهایی
+FreeCAD.ActiveDocument.recompute()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
