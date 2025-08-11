@@ -1,41 +1,4 @@
-import FreeCAD
-import Part
-import math
-
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("CylinderWithCut")
-
-# پارامترهای استوانه
-diameter = 16.0  # قطر استوانه بر حسب میلیمتر
-radius = diameter / 2.0
-length = 80.0    # طول استوانه بر حسب میلیمتر
-cut_offset = 4.0  # فاصله برش از مرکز بر حسب میلیمتر
-
-# ایجاد استوانه اصلی
-cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
-cylinder.Radius = radius
-cylinder.Height = length
-cylinder.Angle = 360.0
-cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90))
-
-# ایجاد جعبه برش (برای ایجاد سطح صاف)
-cut_box = doc.addObject("Part::Box", "CutBox")
-cut_box.Length = diameter  # طول جعبه (بیشتر از قطر استوانه)
-cut_box.Width = diameter   # عرض جعبه
-cut_box.Height = length    # ارتفاع جعبه برابر طول استوانه
-
-# موقعیت دهی جعبه برش
-# جعبه را در فاصله cut_offset از مرکز قرار می‌دهیم
-cut_box.Placement = FreeCAD.Placement(FreeCAD.Vector(-diameter, radius - cut_offset, 0), FreeCAD.Rotation(FreeCAD.Vector(0,0,1), 0))
-
-# انجام عملیات برش
-cut = doc.addObject("Part::Cut", "Cut")
-cut.Base = cylinder
-cut.Tool = cut_box
-
-# نمایش مجدد
-doc.recompute()
-
-# نمایش در نمای سه بعدی
-FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
-FreeCADGui.SendMsgToActiveView("ViewFit")
+File "<input>", line 3
+    import FreeCAD
+    ^^^^^^
+SyntaxError: invalid syntax
