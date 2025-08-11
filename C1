@@ -1,87 +1,68 @@
-import FreeCAD, Part, PartDesign
+import FreeCAD, Part, math
 from FreeCAD import Base
 
-# ایجاد سند جدید (اگر وجود ندارد)
-if not FreeCAD.ActiveDocument:
-    doc = FreeCAD.newDocument("GearDesign")
-else:
-    doc = FreeCAD.ActiveDocument
+doc = FreeCAD.ActiveDocument
 
-# ساخت استوانه اصلی
-cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
-cylinder.Height = 80.0  # 8 cm
-cylinder.Radius = 8.0   # قطر 16mm
-cylinder.Placement = Base.Placement(Base.Vector(0,0,0), Base.Rotation(0,0,0), Base.Vector(0,0,0))
+# پارامترهای چرخ دنده شانه‌ای
+MODULE = 1.0  # استاندارد ISO
+LENGTH = 60.0 # 6 cm
+WIDTH = 12.0  # 1.2 cm
+PRESSURE_ANGLE = math.radians(20) # 20 درجه
 
-# ساخت ابزار برش
-cut_tool = doc.addObject("Part::Box", "CuttingTool")
+# تابع ساخت چرخ دنده شانه‌ای
+def create_rack_gear(length, width, module, pressure_angle):
+    rack = doc.addObject("Part::Feature", "RackGear")
+    
+    # محاسبات دندانه‌ها
+    tooth_width = math.pi * module / 2
+    num_teeth = int(length / (math.pi * module))
+    
+    points = []
+    for i in range(num_teeth + 1):
+        x = i * math.pi * module
+        # پروفیل دندانه (مثلثی ساده)
+        points.append(Base.Vector(x, 0, 0))
+        points.append(Base.Vector(x + tooth_width, 0, module))
+        points.append(Base.Vector(x + math.pi * module, 0, 0))
+    
+    # ایجاد شکل
+    wire = Part.makePolygon(points)
+    face = Part.Face(Part.Wire(wire))
+    rack.Shape = face.extrude(Base.Vector(0, width, 0))
+    return rack
+
+# ساخت قطعه اصلی (همانند قبل)
+cylinder = doc.addObject("Part::Cylinder", "Cylinder")
+cylinder.Height = 80.0
+cylinder.Radius = 8.0
+
+cut_tool = doc.addObject("Part::Box", "CutTool")
 cut_tool.Length = 50.0
 cut_tool.Width = 50.0
 cut_tool.Height = 100.0
-cut_tool.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation(0,0,0), Base.Vector(0,0,0))
+cut_tool.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation())
 
-# انجام برش
 cut_result = doc.addObject("Part::Cut", "CutResult")
 cut_result.Base = cylinder
 cut_result.Tool = cut_tool
 
+# ساخت چرخ دنده شانه‌ای
+rack_gear = create_rack_gear(LENGTH, WIDTH, MODULE, PRESSURE_ANGLE)
+rack_gear.Placement = Base.Placement(
+    Base.Vector(5, -WIDTH/2, 40),  # تراز با سطح برش‌خورده
+    Base.Rotation(90, 0, 0),        # چرخش برای قرارگیری روی سطح
+    Base.Vector(0, 0, 0)
+)
+
+# ادغام نهایی
+final_part = doc.addObject("Part::Fuse", "FinalPart")
+final_part.Base = cut_result
+final_part.Tool = rack_gear
+
+# مخفی کردن اشیاء موقت
+cylinder.ViewObject.Visibility = False
+cut_tool.ViewObject.Visibility = False
+rack_gear.ViewObject.Visibility = False
+
 doc.recompute()
-
-# ساخت چرخ دنده (روش جایگزین)
-def make_gear(num_teeth=10, module=0.8, thickness=5.0):
-    gear = doc.addObject("Part::Feature", "CustomGear")
-    
-    # پارامترهای چرخ دنده
-    pitch_radius = (num_teeth * module) / 2.0
-    base_radius = pitch_radius * math.cos(math.radians(20))
-    
-    # ایجاد پروفیل دندانه
-    teeth = []
-    for i in range(num_teeth):
-        angle = 2 * math.pi * i / num_teeth
-        x = base_radius * math.cos(angle)
-        y = base_radius * math.sin(angle)
-        teeth.append(Base.Vector(x,y,0))
-    
-    # ایجاد شکل نهایی
-    wire = Part.makePolygon(teeth + [teeth[0]])
-    face = Part.Face(wire)
-    gear.Shape = face.extrude(Base.Vector(0,0,thickness))
-    return gear
-
-try:
-    gear = make_gear(num_teeth=12, module=0.6, thickness=8.0)
-    gear.Placement = Base.Placement(
-        Base.Vector(5,0,40),
-        Base.Rotation(0,90,0),
-        Base.Vector(0,0,0)
-    )
-    
-    doc.recompute()
-    
-    # بررسی اعتبار هندسه
-    if not cut_result.Shape.isValid() or not gear.Shape.isValid():
-        raise ValueError("Invalid geometry detected")
-    
-    # ادغام با روش مطمئن
-    fused = doc.addObject("Part::MultiFuse", "FinalGear")
-    fused.Shapes = [cut_result, gear]
-    
-    # مخفی کردن اشیاء موقت
-    cylinder.ViewObject.Visibility = False
-    cut_tool.ViewObject.Visibility = False
-    gear.ViewObject.Visibility = False
-    
-    doc.recompute()
-    FreeCADGui.ActiveDocument.ActiveView.fitAll()
-
-except Exception as e:
-    FreeCAD.Console.PrintError(f"Error: {str(e)}\n")
-    # پاکسازی اشیاء مشکل‌دار در صورت خطا
-    for obj in [cylinder, cut_tool, cut_result, gear]:
-        try:
-            if obj in doc.Objects:
-                doc.removeObject(obj.Name)
-        except:
-            pass
-    doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
