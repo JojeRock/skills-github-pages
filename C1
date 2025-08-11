@@ -1,6 +1,7 @@
 import FreeCAD
 import Part
 import math
+from FreeCAD import Base
 
 # ایجاد سند جدید
 doc = FreeCAD.newDocument("CylinderWithCut")
@@ -15,18 +16,18 @@ cut_distance = 0.5  # فاصله برش از مرکز به سانتیمتر
 cylinder = Part.makeCylinder(radius, length)
 
 # ایجاد صفحه برش
-# صفحه برش باید موازی با محور Z باشد و در فاصله cut_distance از مرکز قرار گیرد
-cut_plane = Part.Plane()
-cut_plane.Axis = FreeCAD.Vector(1, 0, 0)  # جهت نرمال صفحه (محور X)
-cut_plane.Position = FreeCAD.Vector(cut_distance, 0, 0)  # موقعیت صفحه در امتداد محور X
+# در FreeCAD 1.0.1 باید از Base.Vector استفاده کنیم
+normal = Base.Vector(1, 0, 0)  # جهت نرمال صفحه (محور X)
+point = Base.Vector(cut_distance, 0, 0)  # نقطه روی صفحه
+plane = Part.Plane(point, normal)
 
 # ایجاد یک جعبه بزرگ برای برش (بزرگتر از استوانه)
-box_size = diameter * 2
+box_size = diameter * 3  # بزرگتر می‌کنیم تا مطمئن شویم کل برش انجام می‌شود
 cut_box = Part.makeBox(box_size, box_size, length * 2, 
-                      FreeCAD.Vector(-box_size/2, -box_size/2, -length/2))
+                      Base.Vector(-box_size/2, -box_size/2, -length/2))
 
 # تبدیل صفحه به وجه جامد برای برش
-cut_face = cut_plane.toShape()
+cut_face = plane.toShape()
 cut_solid = cut_box.common(cut_face)
 
 # برش استوانه
@@ -37,6 +38,6 @@ cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
 cylinder_obj.Shape = cut_cylinder
 
 # تنظیم نمایش سه بعدی
-doc.recompute()
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
+doc.recompute()
