@@ -2,31 +2,32 @@ import FreeCAD
 import Part
 from FreeCAD import Base
 
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("PreciseCutCylinder")
+doc = FreeCAD.newDocument("CorrectCutCylinder")
 
-# پارامترهای جدید
-diameter = 16.0    # قطر به میلی‌متر
+# پارامترها (مقیاس میلی‌متر)
+diameter = 16.0
 radius = diameter / 2
-length = 80.0      # طول به میلی‌متر
-cut_position = 5.0  # موقعیت برش از مرکز (5mm از وسط)
+length = 80.0
+cut_position = 5.0  # فاصله برش از مرکز به سمت راست
 
-# ایجاد استوانه اصلی
+# 1. ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد جعبه حذف برای قسمت سمت چپ (کوچکتر)
-# این جعبه از -radius شروع می‌شود تا cut_position ادامه دارد
-delete_box = Part.makeBox(cut_position + radius, diameter, length,
-                        Base.Vector(-radius, -radius, 0))
+# 2. ایجاد جعبه حذف برای قسمت سمت چپ (کوچکتر)
+#    عرض جعبه = cut_position + radius (تا پوشش کامل قسمت چپ)
+#    نقطه شروع: (-radius, -radius, 0) از لبه استوانه
+delete_box = Part.makeBox(cut_position + radius, 
+                         diameter * 1.1,  # کمی بزرگتر برای اطمینان
+                         length * 1.1,
+                         Base.Vector(-radius, -radius, 0))
 
-# حذف قسمت سمت چپ
-final_result = cylinder.cut(delete_box)
+# 3. حذف قسمت چپ (کوچکتر)
+final_cylinder = cylinder.cut(delete_box)
 
-# اضافه کردن شیء به سند
-cylinder_obj = doc.addObject("Part::Feature", "RightCylinderPart")
-cylinder_obj.Shape = final_result
+# 4. نمایش نتیجه
+result_obj = doc.addObject("Part::Feature", "LeftPartRemoved")
+result_obj.Shape = final_cylinder
 
-# تنظیم نمایش
 FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
 doc.recompute()
