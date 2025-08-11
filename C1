@@ -6,42 +6,52 @@ def create_cut_cylinder():
     # ایجاد سند جدید
     doc = FreeCAD.ActiveDocument
     if doc is None:
-        doc = FreeCAD.newDocument("CutCylinderDoc")
+        doc = FreeCAD.newDocument("CutCylinder")
     
-    # پارامترهای طراحی
-    diameter = 16.0  # 1.6cm به میلیمتر
+    # پارامترهای طراحی (همه به میلیمتر)
+    diameter = 16.0  # 1.6cm
     radius = diameter / 2
-    length = 80.0    # 8cm به میلیمتر
-    extra_cut = 4.0   # 4mm آنورتر از مرکز
-    
-    # محاسبه موقعیت برش
-    cut_position = radius + extra_cut  # 8 + 4 = 12mm از مرکز
+    length = 80.0    # 8cm
+    extra_offset = 4.0  # 4mm آنورتر از نیمه
     
     # ایجاد استوانه اصلی
     cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
     
-    # ایجاد ابزار برش (یک نیمه بینهایت)
-    # روش مطمئن‌تر: استفاده از یک جعبه بزرگ به عنوان نیمفضا
-    cut_tool = Part.makeBox(100, 100, length*2,
-                          Base.Vector(cut_position, -50, -length))
+    # روش جایگزین: استفاده از یک صفحه برای برش
+    # ابتدا یک مکعب بزرگ ایجاد می‌کنیم
+    box = Part.makeBox(100, 100, length*2, Base.Vector(radius + extra_offset, -50, -length))
     
-    # اعمال برش
-    cut_cylinder = cylinder.cut(cut_tool)
+    # سپس آن را با استوانه ترکیب می‌کنیم
+    common = cylinder.common(box)
+    
+    # حالا تفاضل می‌گیریم تا قسمت مورد نظر باقی بماند
+    cut_cylinder = cylinder.cut(common)
     
     # بررسی نتیجه
-    if cut_cylinder.Volume == cylinder.Volume:
-        FreeCAD.Console.PrintError("برش انجام نشد! بررسی پارامترها\n")
+    if cut_cylinder.isNull() or cut_cylinder.Volume == cylinder.Volume:
+        FreeCAD.Console.PrintError("عملیات برش ناموفق بود!\n")
+        FreeCAD.Console.PrintMessage("مشکلات احتمالی:\n")
+        FreeCAD.Console.PrintMessage("1. موقعیت ابزار برش\n")
+        FreeCAD.Console.PrintMessage("2. جهت برش\n")
+        FreeCAD.Console.PrintMessage("3. اندازه ابزار برش\n")
         return
     
-    # اضافه کردن به سند
-    obj = doc.addObject("Part::Feature", "CutCylinder")
-    obj.Shape = cut_cylinder
+    # نمایش ابزار برش برای دیباگ
+    debug_tool = doc.addObject("Part::Feature", "DebugCutTool")
+    debug_tool.Shape = box
+    debug_tool.ViewObject.Transparency = 80
+    debug_tool.ViewObject.Visibility = False  # غیرفعال بعد از دیباگ
+    
+    # اضافه کردن نتیجه نهایی
+    result = doc.addObject("Part::Feature", "CutCylinder")
+    result.Shape = cut_cylinder
     
     # تنظیمات نمایش
     FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
     FreeCADGui.SendMsgToActiveView("ViewFit")
     doc.recompute()
     
-    FreeCAD.Console.PrintMessage(f"استوانه با برش {extra_cut}mm آنورتر از مرکز ایجاد شد\n")
+    FreeCAD.Console.PrintMessage("عملیات با موفقیت انجام شد!\n")
+    FreeCAD.Console.PrintMessage(f"برش از {radius + extra_offset}mm از مرکز انجام شد\n")
 
 create_cut_cylinder()
