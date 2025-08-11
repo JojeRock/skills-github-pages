@@ -3,27 +3,27 @@ import Part
 from FreeCAD import Base
 
 # ایجاد سند جدید
-doc = FreeCAD.newDocument("CylinderWithCut")
+doc = FreeCAD.newDocument("PreciseCutCylinder")
 
 # پارامترهای استوانه
-diameter = 1.5  # قطر به سانتیمتر
+diameter = 1.5    # قطر به سانتیمتر
 radius = diameter / 2
-length = 8.0    # طول به سانتیمتر
-cut_distance = 0.5  # فاصله برش از مرکز به سانتیمتر
+length = 8.0      # طول به سانتیمتر
+cut_offset = 1.0  # فاصله برش از مرکز (0.5 سانت آنورتر از نیمه) = 0.5 + 0.5
 
 # ایجاد استوانه اصلی
 cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد جعبه برش (نیمه بی نهایت)
-# این روش برای FreeCAD 1.0.1 مطمئن تر است
-cut_box = Part.makeBox(radius*4, radius*4, length*2, 
-                      Base.Vector(cut_distance, -radius*2, -length/2))
+# ایجاد جعبه برش با عرض بسیار کم برای دقت بیشتر
+cut_thickness = 0.01  # ضخامت بسیار کم برش
+cut_box = Part.makeBox(cut_thickness, diameter*2, length*2,
+                      Base.Vector(cut_offset - cut_thickness, -diameter, -length))
 
 # انجام عملیات برش
 result = cylinder.cut(cut_box)
 
 # اضافه کردن شیء به سند
-cylinder_obj = doc.addObject("Part::Feature", "CutCylinder")
+cylinder_obj = doc.addObject("Part::Feature", "PreciselyCutCylinder")
 cylinder_obj.Shape = result
 
 # تنظیم نمایش
