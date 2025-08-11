@@ -1,50 +1,32 @@
-import FreeCAD, Part, math
+import FreeCAD
+import Part
 from FreeCAD import Base
 
 # ایجاد سند جدید
-doc = FreeCAD.newDocument("CylinderWithFlat")
+doc = FreeCAD.newDocument("PreciseCutCylinder")
 
-# پارامترهای استوانه
-diameter = 16.0  # قطر به میلیمتر
-radius = diameter / 2.0
-length = 80.0    # طول به میلیمتر
-cut_offset = 4.0 # فاصله برش از مرکز به میلیمتر
+# پارامترهای جدید
+diameter = 16.0    # قطر به میلی‌متر (16mm)
+radius = diameter / 2
+length = 80.0      # طول به میلی‌متر (معادل 8cm قبلی اما در مقیاس میلی‌متر)
+middle_offset = 4.0  # فاصله برش از مرکز به میلی‌متر (4mm آنورتر از وسط)
 
 # ایجاد استوانه اصلی
-cylinder = doc.addObject("Part::Cylinder", "MainCylinder")
-cylinder.Radius = radius
-cylinder.Height = length
-cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(1,0,0),90))
+cylinder = Part.makeCylinder(radius, length, Base.Vector(0,0,0), Base.Vector(0,0,1))
 
-# ایجاد صفحه برش
-# صفحه برش به صورت عمودی و موازی با محور Z و با فاصله از مرکز
-cut_plane = Part.Plane()
-cut_plane.Axis = FreeCAD.Vector(0, 1, 0)
-cut_plane.Position = FreeCAD.Vector(cut_offset, 0, 0)
-
-# ایجاد جامد صفحه برش
-box_length = diameter * 2  # طول کافی برای برش
-box_width = diameter * 2   # عرض کافی برای برش
-box_height = length * 2     # ارتفاع کافی برای برش
-
-cut_box = doc.addObject("Part::Box", "CutBox")
-cut_box.Length = box_length
-cut_box.Width = box_width
-cut_box.Height = box_height
-cut_box.Placement = FreeCAD.Placement(FreeCAD.Vector(-box_length/2, -box_width/2, -box_height/2), FreeCAD.Rotation())
-
-# تبدیل صفحه به شیء قابل استفاده در برش
-cut_plane_shape = cut_plane.toShape()
-cut_plane_object = doc.addObject("Part::Feature", "CutPlane")
-cut_plane_object.Shape = cut_plane_shape
+# ایجاد جعبه برش با عرض بسیار کم برای دقت بیشتر
+cut_thickness = 0.1  # ضخامت بسیار کم برش (0.1mm)
+cut_box = Part.makeBox(cut_thickness, diameter*2, length*2,
+                      Base.Vector(middle_offset - cut_thickness, -diameter, -length))
 
 # انجام عملیات برش
-cut = doc.addObject("Part::Cut", "Cut")
-cut.Base = cylinder
-cut.Tool = cut_box
-cut.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(0,0,1),0))
+result = cylinder.cut(cut_box)
+
+# اضافه کردن شیء به سند
+cylinder_obj = doc.addObject("Part::Feature", "PreciselyCutCylinder")
+cylinder_obj.Shape = result
 
 # تنظیم نمایش
-doc.recompute()
-FreeCADGui.ActiveDocument.activeView().viewAxometric()
+FreeCADGui.ActiveDocument.ActiveView.viewAxometric()
 FreeCADGui.SendMsgToActiveView("ViewFit")
+doc.recompute()
