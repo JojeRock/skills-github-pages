@@ -1,41 +1,54 @@
 import FreeCAD
 import Part
-import Draft
 import math
 
-# تنظیمات اولیه
-length = 80.0  # طول استوانه بر حسب میلی‌متر (8 سانت)
-radius = 7.5  # شعاع استوانه بر حسب میلی‌متر (قطر 15mm → شعاع 7.5mm)
-tooth_depth = 1.0  # عمق دندانه بر حسب میلی‌متر
-tooth_width = 2.0  # عرض دندانه بر حسب میلی‌متر (اختیاری، می‌توانید تغییر دهید)
-num_teeth = 20  # تعداد دندانه‌ها (اختیاری)
+# پارامترهای چرخدنده
+module = 1.5  # اندازه ماژول (فاصله بین دندانه‌ها) - متناسب با قطر 15mm
+num_teeth = 10  # تعداد دندانه‌ها
+gear_length = 80.0  # طول چرخدنده (mm)
+pressure_angle = 20  # زاویه فشار (درجه)
 
-# ایجاد استوانهٔ پایه
-cylinder = Part.makeCylinder(radius, length)
+# محاسبات اولیه
+pitch_radius = (module * num_teeth) / 2
+base_radius = pitch_radius * math.cos(math.radians(pressure_angle))
 
-# ایجاد دندانه‌ها (به صورت پروفیل دندانه‌های ساده)
-teeth = []
+# تابع ایجاد پروفیل یک دندانه (در صفحه XZ)
+def create_tooth_profile():
+    points = []
+    for i in range(21):
+        t = i / 20.0 * (math.pi / 2)
+        x = base_radius * (math.cos(t) + t * math.sin(t))
+        z = base_radius * (math.sin(t) - t * math.cos(t))
+        points.append(FreeCAD.Vector(x, 0, z))  # توجه: Y=0 (موازی محور Z)
+    
+    # ایجاد سیم (Wire) از نقاط
+    wire = Part.makePolygon(points)
+    return wire
+
+# ایجاد یک دندانه و اکسترود در جهت Y (عرض چرخدنده)
+tooth_profile = create_tooth_profile()
+tooth_face = Part.Face(tooth_profile)
+tooth_solid = tooth_face.extrude(FreeCAD.Vector(0, gear_length, 0))  # اکسترود در جهت Y
+
+# کپی و چرخش دندانه‌ها حول محور Z
+gear = None
 for i in range(num_teeth):
-    angle = 2 * math.pi * i / num_teeth  # زاویه در رادیان
-    x1 = radius * math.cos(angle)
-    y1 = radius * math.sin(angle)
-    x2 = (radius + tooth_depth) * math.cos(angle)
-    y2 = (radius + tooth_depth) * math.sin(angle)
+    angle = 360.0 / num_teeth * i
+    rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), angle)
+    placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rotation)
     
-    # ایجاد خطوط برای دندانه (به شکل مثلث ساده)
-    tooth_edge = Part.makeLine((x1, y1, 0), (x2, y2, 0))
-    tooth_edge2 = Part.makeLine((x2, y2, 0), (x1, y1, length))
-    tooth_edge3 = Part.makeLine((x1, y1, length), (x1, y1, 0))
+    new_tooth = tooth_solid.copy()
+    new_tooth.Placement = placement
     
-    wire = Part.Wire([tooth_edge, tooth_edge2, tooth_edge3])
-    face = Part.Face(wire)
-    tooth = face.extrude(FreeCAD.Vector(0, 0, length))
-    teeth.append(tooth)
+    if gear is None:
+        gear = new_tooth
+    else:
+        gear = gear.fuse(new_tooth)
 
-# ترکیب دندانه‌ها با استوانه
-gear = cylinder
-for tooth in teeth:
-    gear = gear.fuse(tooth)
+# ایجاد هسته مرکزی (استوانه مرکزی)
+core_cylinder = Part.makeCylinder(pitch_radius - module, gear_length, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 1, 0))
+gear = gear.fuse(core_cylinder)
 
-# نمایش در FreeCAD
+# نمایش نتیجه
 Part.show(gear)
+FreeCAD.ActiveDocument.recompute()
