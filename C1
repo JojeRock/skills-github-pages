@@ -1,101 +1,37 @@
-import FreeCAD, FreeCADGui, Part, math
+import FreeCAD, Part, math
 from FreeCAD import Base
 
-def create_precision_rack():
-    try:
-        # مدیریت سند
-        doc = FreeCAD.ActiveDocument if FreeCAD.ActiveDocument else FreeCAD.newDocument("PrecisionRack")
-        
-        # پارامترهای طراحی دقیق
-        MODULE = 1.0       # اندازه استاندارد دندانه
-        PRESSURE_ANGLE = math.radians(20)  # زاویه فشار 20 درجه
-        GEAR_LENGTH = 60.0 # طول 6 سانت
-        GEAR_WIDTH = 12.0  # عرض 1.2 سانت
-        GEAR_HEIGHT = 5.0  # ارتفاع دندانه‌ها
+# ایجاد یک سند جدید
+doc = FreeCAD.newDocument("CutCylinder")
 
-        # 1. ساخت قطعه پایه (استوانه برش خورده)
-        cylinder = doc.addObject("Part::Cylinder", "BaseCylinder")
-        cylinder.Height = 80.0
-        cylinder.Radius = 8.0
-        
-        cutter = doc.addObject("Part::Box", "Cutter")
-        cutter.Length = 50.0
-        cutter.Width = 50.0
-        cutter.Height = 100.0
-        cutter.Placement = Base.Placement(Base.Vector(5,-25,-10), Base.Rotation())
-        
-        base_part = doc.addObject("Part::Cut", "BasePart")
-        base_part.Base = cylinder
-        base_part.Tool = cutter
-        doc.recompute()
+# ساخت استوانه توپر (طول 80mm، قطر 16mm)
+cylinder = doc.addObject("Part::Cylinder", "SolidCylinder")
+cylinder.Height = 80.0  # 8 cm = 80 mm
+cylinder.Radius = 8.0   # قطر 1.6 cm = شعاع 8 mm
+cylinder.Placement = Base.Placement(Base.Vector(0, 0, 0), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
 
-        # 2. ساخت چرخ دنده شانه‌ای با دقت بالا
-        def make_precision_rack(length, width, height, module, pressure_angle):
-            # محاسبات دقیق پروفیل دندانه
-            pitch = math.pi * module
-            addendum = module
-            dedendum = 1.25 * module
-            tooth_thickness = pitch / 2
-            
-            points = []
-            num_teeth = int(math.ceil(length / pitch))
-            
-            for i in range(num_teeth + 1):
-                x = i * pitch
-                # نقاط پروفیل دندانه (پایه تا نوک)
-                points.append(Base.Vector(x, 0, 0))
-                points.append(Base.Vector(x + tooth_thickness/2, 0, addendum))
-                points.append(Base.Vector(x + tooth_thickness, 0, 0))
-            
-            # ایجاد شکل نهایی
-            wire = Part.makePolygon(points)
-            face = Part.Face(wire)
-            return face.extrude(Base.Vector(0, width, 0))
+# ساخت صفحه برش (با فاصله 5mm از مرکز)
+# صفحه به صورت عمودی و با offset 5mm در جهت X قرار می‌گیرد
+cut_plane = Part.Plane(Base.Vector(5, 0, 0), Base.Vector(1, 0, 0))
 
-        rack_shape = make_precision_rack(
-            GEAR_LENGTH, GEAR_WIDTH, GEAR_HEIGHT, 
-            MODULE, PRESSURE_ANGLE
-        )
-        
-        rack = doc.addObject("Part::Feature", "PrecisionRack")
-        rack.Shape = rack_shape
-        
-        # 3. قرارگیری دقیق روی سطح
-        # محاسبه مرکز هندسی سطح صاف
-        cut_face = base_part.Shape.Faces[0]  # سطح صاف برش خورده
-        center = cut_face.CenterOfMass
-        
-        # تنظیم موقعیت با دقت میکرون
-        rack.Placement = Base.Placement(
-            Base.Vector(center.x, center.y - GEAR_WIDTH/2, center.z),
-            Base.Rotation(90, 0, 0),  # چرخش 90 درجه حول محور X
-            Base.Vector(0, 0, 0)
-        )
-        doc.recompute()
+# ایجاد یک جعبه (Box) بزرگ به عنوان ابزار برش
+# (بزرگ‌تر از استوانه باشد تا برش به درستی انجام شود)
+cut_tool = doc.addObject("Part::Box", "CuttingTool")
+cut_tool.Length = 50.0
+cut_tool.Width = 50.0
+cut_tool.Height = 100.0
+cut_tool.Placement = Base.Placement(Base.Vector(5, -25, -10), Base.Rotation(0, 0, 0), Base.Vector(0, 0, 0))
 
-        # 4. ادغام نهایی با روش مطمئن
-        # بررسی تماس دقیق سطوح
-        contact_check = rack.Shape.distToShape(base_part.Shape)
-        if contact_check[0] < 0.001:  # تماس با دقت 1 میکرون
-            final = doc.addObject("Part::Fuse", "FinalAssembly")
-            final.Base = base_part
-            final.Tool = rack
-            
-            # مخفی کردن اجزاء موقت
-            cylinder.ViewObject.Visibility = False
-            cutter.ViewObject.Visibility = False
-            rack.ViewObject.Visibility = False
-            
-            doc.recompute()
-            FreeCADGui.ActiveDocument.ActiveView.fitAll()
-            return final
-        else:
-            raise ValueError("دندانه‌ها با سطح تماس ندارند")
+# انجام عملیات برش
+cut_result = doc.addObject("Part::Cut", "CutResult")
+cut_result.Base = cylinder
+cut_result.Tool = cut_tool
+doc.recompute()
 
-    except Exception as e:
-        FreeCAD.Console.PrintError(f"خطا: {str(e)}\n")
-        if 'doc' in locals():
-            doc.recompute()
-        return None
+# مخفی کردن ابزار برش و استوانه اصلی (اختیاری)
+cut_tool.ViewObject.Visibility = False
+cylinder.ViewObject.Visibility = False
 
-create_precision_rack()
+# نمایش نتیجه نهایی
+FreeCAD.ActiveDocument.recompute()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
