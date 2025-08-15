@@ -1,5 +1,50 @@
-Traceback (most recent call last):
-  File "<input>", line 1, in <module>
-  File "<input>", line 7, in create_rack_gear
-AttributeError: module 'Part' has no attribute 'makeRack'. Did you mean: 'makeFace'?
->>> # App.setActiveDocument("RackGear")
+import FreeCAD
+import Part
+import math
+
+def create_rack_gear():
+    # پارامترهای چرخ دنده شانه‌ای
+    length = 60.0  # طول (6 سانت)
+    width = 12.0   # عرض (1.2 سانت)
+    module = 1.0   # مدول دندانه
+    pressure_angle = 20.0  # زاویه فشار (درجه)
+    
+    # محاسبات دندانه‌ها
+    tooth_spacing = math.pi * module  # فاصله بین دندانه‌ها
+    tooth_height = 2.25 * module      # ارتفاع دندانه
+    num_teeth = int(length / tooth_spacing)  # تعداد دندانه‌ها
+    
+    # ایجاد پروفیل دندانه
+    profile = []
+    for i in range(num_teeth + 1):
+        x = i * tooth_spacing
+        # نقاط برای یک دندانه
+        profile.append(FreeCAD.Vector(x, 0, 0))
+        profile.append(FreeCAD.Vector(x + module/2, tooth_height - module, 0))
+        profile.append(FreeCAD.Vector(x + module, tooth_height, 0))
+        profile.append(FreeCAD.Vector(x + module*1.5, tooth_height - module, 0))
+        profile.append(FreeCAD.Vector(x + 2*module, 0, 0))
+    
+    # ایجاد خط از نقاط
+    wire = Part.makePolygon(profile)
+    
+    # اکسترود کردن به عرض مورد نظر
+    face = Part.Face(wire)
+    rack = face.extrude(FreeCAD.Vector(0, 0, width))
+    
+    # ایجاد شیء در سند
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        doc = FreeCAD.newDocument("RackGear")
+    
+    rack_obj = doc.addObject("Part::Feature", "RackGear")
+    rack_obj.Shape = rack
+    
+    # تنظیمات نمایش
+    rack_obj.ViewObject.ShapeColor = (0.67, 0.67, 0.67)
+    doc.recompute()
+    
+    return rack_obj
+
+# اجرای تابع
+rack_gear = create_rack_gear()
