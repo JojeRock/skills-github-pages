@@ -1,4 +1,36 @@
-Traceback (most recent call last):
-  File "<input>", line 1, in <module>
-  File "<input>", line 17, in create_spur_gear
-AttributeError: Attribute 'Module' of object 'BaseClass' is read-only
+import FreeCAD
+import Part
+import InvoluteGearFeature
+
+def create_spur_gear():
+    # پارامترهای چرخ دنده
+    module = 1.0
+    teeth = 20
+    pressure_angle = 20.0
+    thickness = 12.0
+    
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        doc = FreeCAD.newDocument("GearAssembly")
+    
+    # روش سازگار با FreeCAD 1.0.1
+    gear = InvoluteGearFeature.makeInvoluteGear()
+    gear.NumberOfTeeth = teeth
+    gear.Module = module
+    gear.PressureAngle = pressure_angle
+    
+    # ایجاد شکل
+    shape = gear.toShape()
+    
+    # ایجاد شیء در سند
+    gear_obj = doc.addObject("Part::Feature", "SpurGear")
+    gear_obj.Shape = shape.extrude(FreeCAD.Vector(0,0,thickness))
+    
+    # تنظیمات نمایش
+    gear_obj.ViewObject.ShapeColor = (0.33, 0.33, 0.67)
+    doc.recompute()
+    
+    return gear_obj
+
+# اجرای تابع
+spur_gear = create_spur_gear()
