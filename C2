@@ -1,5 +1,94 @@
-Traceback (most recent call last):
-  File "<input>", line 1, in <module>
-  File "<input>", line 10, in create_half_gear
-AttributeError: module 'Part' has no attribute 'makeGear'
->>> 
+import FreeCAD
+import Part
+import math
+
+def create_involute_gear(module, teeth, pressure_angle, thickness):
+    # محاسبات پارامترهای چرخ دنده
+    pitch_radius = (module * teeth) / 2
+    base_radius = pitch_radius * math.cos(math.radians(pressure_angle))
+    outer_radius = pitch_radius + module
+    root_radius = pitch_radius - 1.25 * module
+    
+    # ایجاد پروفیل دندانه
+    involute_points = []
+    for i in range(21):
+        t = i / 20.0
+        angle = 2 * math.pi * t
+        x = base_radius * (math.cos(angle) + angle * math.sin(angle))
+        y = base_radius * (math.sin(angle) - angle * math.cos(angle))
+        involute_points.append(FreeCAD.Vector(x, y, 0))
+    
+    # ایجاد یک دندانه
+    tooth_profile = []
+    tooth_profile.append(FreeCAD.Vector(root_radius, 0, 0))
+    
+    # نقاط اینولوت
+    for point in reversed(involute_points):
+        if point.Length <= outer_radius:
+            tooth_profile.append(point)
+    
+    tooth_profile.append(FreeCAD.Vector(outer_radius * math.cos(math.pi/teeth), 
+                                      outer_radius * math.sin(math.pi/teeth), 0))
+    
+    # ایجاد سیم (wire) از پروفیل
+    wire = Part.makePolygon(tooth_profile)
+    
+    # چرخش برای ایجاد تمام دندانه‌ها
+    gear = None
+    for i in range(teeth):
+        angle = i * (2 * math.pi / teeth)
+        rotated_wire = wire.copy()
+        rotated_wire.rotate(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), math.degrees(angle))
+        if gear is None:
+            gear = rotated_wire
+        else:
+            gear = gear.fuse(rotated_wire)
+    
+    # بستن پروفیل و ایجاد صورت
+    face = Part.Face(Part.Wire(gear))
+    gear_solid = face.extrude(FreeCAD.Vector(0,0,thickness))
+    
+    return gear_solid
+
+def create_half_gear():
+    # پارامترهای چرخ دنده
+    module = 1.0
+    teeth = 12
+    pressure_angle = 20
+    thickness = 12.0
+    gear_radius = (teeth * module) / 2
+    
+    # ایجاد چرخ دنده کامل
+    gear = create_involute_gear(module, teeth, pressure_angle, thickness)
+    
+    # ایجاد صفحه برش
+    cut_plane = Part.makePlane(gear_radius * 3, gear_radius * 3, 
+                             FreeCAD.Vector(0, -gear_radius, 0), 
+                             FreeCAD.Vector(0, 1, 0))
+    
+    # برش چرخ دنده
+    half_gear = gear.cut(cut_plane)
+    
+    # ایجاد قسمت استوانه‌ای صاف
+    cylinder = Part.makeCylinder(gear_radius, thickness, 
+                               FreeCAD.Vector(0,0,0), 
+                               FreeCAD.Vector(0,0,1))
+    cylinder = cylinder.cut(cut_plane)
+    
+    # ترکیب نیمه چرخ دنده با استوانه
+    final_gear = half_gear.fuse(cylinder)
+    
+    # اضافه کردن به سند
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        doc = FreeCAD.newDocument("GearAssembly")
+    
+    gear_obj = doc.addObject("Part::Feature", "HalfGear")
+    gear_obj.Shape = final_gear
+    gear_obj.ViewObject.ShapeColor = (0.33, 0.67, 0.93)
+    doc.recompute()
+    
+    return gear_obj
+
+# اجرای تابع
+half_gear = create_half_gear()
