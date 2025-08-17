@@ -1,36 +1,31 @@
 import FreeCAD
-import Part
+import PartDesign
 import InvoluteGearFeature
 
 def create_spur_gear():
-    # پارامترهای چرخ دنده
-    module = 1.0
-    teeth = 20
-    pressure_angle = 20.0
-    thickness = 12.0
-    
     doc = FreeCAD.ActiveDocument
     if doc is None:
         doc = FreeCAD.newDocument("GearAssembly")
     
-    # روش سازگار با FreeCAD 1.0.1
-    gear = InvoluteGearFeature.makeInvoluteGear()
-    gear.NumberOfTeeth = teeth
-    gear.Module = module
-    gear.PressureAngle = pressure_angle
+    # ایجاد یک بدنه جدید در PartDesign
+    body = doc.addObject('PartDesign::Body','GearBody')
     
-    # ایجاد شکل
-    shape = gear.toShape()
+    # ایجاد چرخ دنده
+    gear = doc.addObject('PartDesign::InvoluteGear','SpurGear')
+    gear.NumberOfTeeth = 20
+    gear.Module = '1.0 mm'
+    gear.PressureAngle = '20 deg'
     
-    # ایجاد شیء در سند
-    gear_obj = doc.addObject("Part::Feature", "SpurGear")
-    gear_obj.Shape = shape.extrude(FreeCAD.Vector(0,0,thickness))
+    # اضافه کردن چرخ دنده به بدنه
+    body.addObject(gear)
     
-    # تنظیمات نمایش
-    gear_obj.ViewObject.ShapeColor = (0.33, 0.33, 0.67)
+    # اکسترود کردن
+    pad = doc.addObject('PartDesign::Pad','GearPad')
+    pad.Profile = gear
+    pad.Length = '12 mm'
+    body.addObject(pad)
+    
     doc.recompute()
-    
-    return gear_obj
+    return gear
 
-# اجرای تابع
 spur_gear = create_spur_gear()
