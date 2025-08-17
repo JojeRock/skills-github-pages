@@ -1,73 +1,48 @@
 import FreeCAD
 import Part
-import InvoluteGearFeature
 import math
 
-def create_half_spur_gear():
-    # پارامترهای طراحی
-    teeth = 12           # تعداد دنده‌ها
-    module = 1.0         # مدول (باید با چرخ دنده شانه ای یکسان باشد)
-    thickness = 10.0     # ضخامت چرخ دنده
-    shaft_dia = 5.0      # قطر محور موتور
+def create_half_gear():
+    # پارامترهای چرخ دنده (متناسب با چرخ دنده شانه‌ای قبلی)
+    module = 1.0           # باید همانند چرخ دنده شانه‌ای باشد
+    teeth = 12             # تعداد دندانه‌ها
+    pressure_angle = 20    # زاویه فشار (درجه)
+    thickness = 12.0       # ضخامت (همانند عرض چرخ دنده شانه‌ای)
+    gear_radius = (teeth * module) / 2  # شعاع چرخ دنده
     
-    doc = FreeCAD.newDocument("HalfSpurGear")
+    # ایجاد چرخ دنده کامل
+    gear = Part.makeGear(module, teeth, pressure_angle, thickness)
     
-    # 1. ایجاد چرخ دنده کامل
-    gear = doc.addObject("Part::FeaturePython", "SpurGear")
-    InvoluteGearFeature.InvoluteGear(gear)
-    gear.NumberOfTeeth = teeth
-    gear.Module = module
-    gear.PressureAngle = 20.0
-    gear.Height = thickness
+    # ایجاد صفحه برش برای نیمه کردن چرخ دنده
+    cut_plane = Part.makePlane(gear_radius * 3, gear_radius * 3, 
+                              FreeCAD.Vector(0, -gear_radius, 0), 
+                              FreeCAD.Vector(0, 1, 0))
     
-    # 2. ایجاد بلوک برای برش نصف چرخ دنده
-    cutter = doc.addObject("Part::Box", "CutterBox")
-    cutter.Length = module * teeth * 2
-    cutter.Width = module * teeth
-    cutter.Height = thickness * 2
+    # برش چرخ دنده به دو نیمه
+    half_gear = gear.cut(cut_plane)
     
-    # موقعیت دهی بلوک برش
-    gear.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), FreeCAD.Rotation(0, 0, 0))
-    cutter.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(-module*teeth/2, 0, -thickness/2),
-        FreeCAD.Rotation(0, 0, 0)
-    )
+    # ایجاد قسمت استوانه‌ای صاف برای نیمه دیگر
+    cylinder = Part.makeCylinder(gear_radius, thickness, 
+                                FreeCAD.Vector(0, 0, 0), 
+                                FreeCAD.Vector(0, 0, 1))
+    cylinder = cylinder.cut(cut_plane)
     
-    # 3. برش چرخ دنده به نصف
-    half_gear = doc.addObject("Part::Cut", "HalfGear")
-    half_gear.Base = gear
-    half_gear.Tool = cutter
+    # ترکیب نیمه چرخ دنده با استوانه صاف
+    final_gear = half_gear.fuse(cylinder)
     
-    # 4. ایجاد سوراخ مرکزی برای محور موتور
-    shaft_hole = doc.addObject("Part::Cylinder", "ShaftHole")
-    shaft_hole.Radius = shaft_dia / 2
-    shaft_hole.Height = thickness * 1.2
-    shaft_hole.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(0, 0, -thickness*0.1),
-        FreeCAD.Rotation(0, 0, 0)
-    )
+    # ایجاد شیء در سند
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        doc = FreeCAD.newDocument("GearAssembly")
     
-    # 5. تفریق سوراخ از چرخ دنده
-    final_gear = doc.addObject("Part::Cut", "FinalGear")
-    final_gear.Base = half_gear
-    final_gear.Tool = shaft_hole
-    
-    # 6. ایجاد محور موتور (اختیاری)
-    shaft = doc.addObject("Part::Cylinder", "MotorShaft")
-    shaft.Radius = shaft_dia / 2 - 0.2  # کمی کوچکتر برای فیت شدن
-    shaft.Height = 15.0
-    shaft.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(0, 0, -15),
-        FreeCAD.Rotation(0, 0, 0)
-    )
+    gear_obj = doc.addObject("Part::Feature", "HalfGear")
+    gear_obj.Shape = final_gear
     
     # تنظیمات نمایش
-    final_gear.ViewObject.ShapeColor = (0.2, 0.8, 0.2)  # رنگ سبز
-    shaft_hole.ViewObject.Visibility = False
-    cutter.ViewObject.Visibility = False
-    shaft.ViewObject.ShapeColor = (0.5, 0.5, 0.5)  # رنگ خاکستری
-    
+    gear_obj.ViewObject.ShapeColor = (0.33, 0.67, 0.93)  # رنگ آبی
     doc.recompute()
-    FreeCADGui.SendMsgToActiveView("ViewFit")
+    
+    return gear_obj
 
-create_half_spur_gear()
+# اجرای تابع
+half_gear = create_half_gear()
