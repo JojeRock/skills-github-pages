@@ -1,31 +1,63 @@
 import FreeCAD
-import PartDesign
-import InvoluteGearFeature
+import Part
+import math
 
 def create_spur_gear():
+    # پارامترهای چرخ دنده
+    module = 1.0
+    teeth = 20
+    thickness = 12.0
+    pressure_angle = math.radians(20)  # تبدیل به رادیان
+    
+    # محاسبات اولیه
+    pitch_diameter = module * teeth
+    addendum = module
+    dedendum = 1.25 * module
+    outer_diameter = pitch_diameter + 2 * addendum
+    
+    # ایجاد پروفیل چرخ دنده
+    profiles = []
+    for i in range(teeth):
+        angle = 2 * math.pi * i / teeth
+        # نقاط دندانه
+        p1 = FreeCAD.Vector(
+            (pitch_diameter/2) * math.cos(angle),
+            (pitch_diameter/2) * math.sin(angle),
+            0
+        )
+        p2 = FreeCAD.Vector(
+            (outer_diameter/2) * math.cos(angle + math.pi/teeth),
+            (outer_diameter/2) * math.sin(angle + math.pi/teeth),
+            0
+        )
+        p3 = FreeCAD.Vector(
+            (pitch_diameter/2 - dedendum) * math.cos(angle + 2*math.pi/(teeth*2)),
+            (pitch_diameter/2 - dedendum) * math.sin(angle + 2*math.pi/(teeth*2)),
+            0
+        )
+        profiles.extend([p1, p2, p3])
+    
+    # بستن پروفیل
+    profiles.append(profiles[0])
+    
+    # ایجاد شکل
+    wire = Part.makePolygon(profiles)
+    face = Part.Face(wire)
+    gear = face.extrude(FreeCAD.Vector(0, 0, thickness))
+    
+    # ایجاد شیء در سند
     doc = FreeCAD.ActiveDocument
     if doc is None:
         doc = FreeCAD.newDocument("GearAssembly")
     
-    # ایجاد یک بدنه جدید در PartDesign
-    body = doc.addObject('PartDesign::Body','GearBody')
+    gear_obj = doc.addObject("Part::Feature", "SpurGear")
+    gear_obj.Shape = gear
     
-    # ایجاد چرخ دنده
-    gear = doc.addObject('PartDesign::InvoluteGear','SpurGear')
-    gear.NumberOfTeeth = 20
-    gear.Module = '1.0 mm'
-    gear.PressureAngle = '20 deg'
-    
-    # اضافه کردن چرخ دنده به بدنه
-    body.addObject(gear)
-    
-    # اکسترود کردن
-    pad = doc.addObject('PartDesign::Pad','GearPad')
-    pad.Profile = gear
-    pad.Length = '12 mm'
-    body.addObject(pad)
-    
+    # تنظیمات نمایش
+    gear_obj.ViewObject.ShapeColor = (0.33, 0.33, 0.67)
     doc.recompute()
-    return gear
+    
+    return gear_obj
 
+# اجرای تابع
 spur_gear = create_spur_gear()
