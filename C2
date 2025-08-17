@@ -2,62 +2,56 @@ import FreeCAD
 import Part
 import math
 
-def create_spur_gear():
-    # پارامترهای چرخ دنده
-    module = 1.0
-    teeth = 20
-    thickness = 12.0
-    pressure_angle = math.radians(20)  # تبدیل به رادیان
+def create_spur_gear(module=1.0, teeth=20, thickness=12.0, pressure_angle=20.0):
+    """
+    تابع ایجاد چرخ دنده استاندارد با پارامترهای:
+    module: مدول دندانه (مطابق با چرخ دنده شانه‌ای)
+    teeth: تعداد دندانه‌ها
+    thickness: ضخامت چرخ دنده
+    pressure_angle: زاویه فشار (درجه)
+    """
+    # تبدیل زاویه به رادیان
+    pressure_angle = math.radians(pressure_angle)
     
-    # محاسبات اولیه
+    # محاسبات پارامترهای چرخ دنده
     pitch_diameter = module * teeth
     addendum = module
     dedendum = 1.25 * module
     outer_diameter = pitch_diameter + 2 * addendum
+    base_diameter = pitch_diameter * math.cos(pressure_angle)
     
-    # ایجاد پروفیل چرخ دنده
-    profiles = []
-    for i in range(teeth):
+    # ایجاد نقاط پروفیل دندانه
+    points = []
+    for i in range(teeth + 1):
         angle = 2 * math.pi * i / teeth
-        # نقاط دندانه
-        p1 = FreeCAD.Vector(
-            (pitch_diameter/2) * math.cos(angle),
-            (pitch_diameter/2) * math.sin(angle),
-            0
-        )
-        p2 = FreeCAD.Vector(
-            (outer_diameter/2) * math.cos(angle + math.pi/teeth),
-            (outer_diameter/2) * math.sin(angle + math.pi/teeth),
-            0
-        )
-        p3 = FreeCAD.Vector(
-            (pitch_diameter/2 - dedendum) * math.cos(angle + 2*math.pi/(teeth*2)),
-            (pitch_diameter/2 - dedendum) * math.sin(angle + 2*math.pi/(teeth*2)),
-            0
-        )
-        profiles.extend([p1, p2, p3])
+        # نقاط پروفیل اینولوت
+        x = base_diameter/2 * (math.cos(angle) + angle * math.sin(angle))
+        y = base_diameter/2 * (math.sin(angle) - angle * math.cos(angle))
+        points.append(FreeCAD.Vector(x, y, 0))
     
-    # بستن پروفیل
-    profiles.append(profiles[0])
+    # ایجاد شکل دندانه‌ها
+    wire = Part.makePolygon(points)
+    face = Part.Face(Part.Wire(wire))
+    gear = face.revolve(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 360)
     
-    # ایجاد شکل
-    wire = Part.makePolygon(profiles)
-    face = Part.Face(wire)
-    gear = face.extrude(FreeCAD.Vector(0, 0, thickness))
+    # اکسترود به ضخامت مورد نظر
+    extruded_gear = gear.extrude(FreeCAD.Vector(0,0,thickness))
     
     # ایجاد شیء در سند
-    doc = FreeCAD.ActiveDocument
-    if doc is None:
-        doc = FreeCAD.newDocument("GearAssembly")
-    
+    doc = FreeCAD.ActiveDocument or FreeCAD.newDocument("GearAssembly")
     gear_obj = doc.addObject("Part::Feature", "SpurGear")
-    gear_obj.Shape = gear
+    gear_obj.Shape = extruded_gear
     
     # تنظیمات نمایش
-    gear_obj.ViewObject.ShapeColor = (0.33, 0.33, 0.67)
+    gear_obj.ViewObject.ShapeColor = (0.33, 0.33, 0.67)  # رنگ آبی-خاکستری
     doc.recompute()
     
     return gear_obj
 
-# اجرای تابع
-spur_gear = create_spur_gear()
+# ایجاد چرخ دنده با پارامترهای استاندارد
+spur_gear = create_spur_gear(
+    module=1.0,      # مطابق با چرخ دنده شانه‌ای
+    teeth=20,       # تعداد دندانه‌های مناسب
+    thickness=12.0, # هماندازه با عرض چرخ دنده شانه‌ای
+    pressure_angle=20.0  # زاویه استاندارد
+)
