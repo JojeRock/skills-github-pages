@@ -1,25 +1,11 @@
-import FreeCAD
-import FCGear
+gear = FreeCAD.ActiveDocument.InvoluteGear  # یا نام دقیق شیء شما
 
-# ایجاد سند جدید
-doc = FreeCAD.newDocument("GearProject")
 
-# ایجاد چرخ دنده ساده (Spur Gear)
-spur_gear = doc.addObject("Part::FeaturePython", "SpurGear")
-FCGear.InvoluteGear(spur_gear)
-
-# تنظیم پارامترهای اصلی (مطابق نیاز شما)
-spur_gear.NumberOfTeeth = 20       # تعداد دندانه‌ها
-spur_gear.Module = 1.0             # مدول = 1 (مطابق چرخ دنده شانه‌ای شما)
-spur_gear.PressureAngle = 20.0     # زاویه فشار 20 درجه
-spur_gear.Height = 12.0            # ضخامت 12mm (مطابق چرخ دنده شانه‌ای)
-spur_gear.Backlash = 0.0           # لقی صفر
-spur_gear.HighPrecision = True     # دقت بالا
+# پارامترهای کلیدی (مطابق نیاز شما)
+gear.NumberOfTeeth = 20       # تعداد دندانه‌ها = ۲۰
+gear.Module = 1.0             # مدول = ۱.۰ (مطابق چرخ‌دنده شانه‌ای)
+gear.Height = 12.0            # ضخامت = ۱۲mm (مطابق چرخ‌دنده شانه‌ای)
+gear.PressureAngle = 20.0     # زاویه فشار = ۲۰ درجه (استاندارد)
 
 # اعمال تغییرات
-spur_gear.Proxy.execute(spur_gear)
-doc.recompute()
-
-# نمایش پارامترهای قابل تنظیم
-print("پارامترهای قابل تنظیم:")
-print([prop for prop in spur_gear.PropertiesList if not prop.startswith('_')])
+gear.recompute()
