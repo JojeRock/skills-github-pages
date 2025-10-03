@@ -1,8 +1,8 @@
 {
   "format_version": 2,
   "header": {
-    "name": "پک کریپر من",
-    "description": "تغییر ظاهر و صدای کریپرها",
+    "name": "My Creeper Pack",
+    "description": "Custom Creeper",
     "uuid": "a1b2c3d4-1234-5678-9101-112131415161",
     "version": [1, 0, 0],
     "min_engine_version": [1, 16, 0]
