@@ -1,1 +1,17 @@
-https://api.github.com/repos/OnixClient/onix_compatible_appx/releases
+{
+  "format_version": 2,
+  "header": {
+    "name": "پک کریپر من",
+    "description": "تغییر ظاهر و صدای کریپرها",
+    "uuid": "a1b2c3d4-1234-5678-9101-112131415161",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 16, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "e5f6g7h8-1234-5678-9101-112131415162",
+      "version": [1, 0, 0]
+    }
+  ]
+}
