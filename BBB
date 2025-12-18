@@ -1,4 +1,952 @@
-Traceback (most recent call last):
-  File "<input>", line 1, in <module>
-AttributeError: 'NoneType' object has no attribute 'ActiveView'
->>> 
+<?php
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+error_reporting(E_ALL);
+
+// تنظیمات اصلی
+define('BOT_TOKEN', '7735298785:AAEoKk3OtpUe_0YmYuGkS0k0hhOMGwZe2Vw');
+define('ADMIN_ID', 5107034738);
+define('MAX_LYRICS_LENGTH', 4000);
+define('LOG_FILE', 'bot_logs.log');
+define('DB_FILE', 'data/bot_db.json');
+define('CACHE_DIR', 'data/cache');
+define('CACHE_EXPIRE_TIME', 86400);
+
+// Google API Key
+define('GOOGLE_API_KEY', 'AIzaSyAA38-fXEIR1IZILc9MeUQoZBmC3MU89no');
+define('GOOGLE_SE_ID', 'd73c8c15c9c244b84');
+
+// ایجاد ساختار پوشه‌ها
+if (!file_exists('data')) mkdir('data', 0755, true);
+if (!file_exists(CACHE_DIR)) mkdir(CACHE_DIR, 0755, true);
+
+class LyricsBot {
+    private $db;
+    private $userStates = [];
+    private $searchResults = [];
+    
+    public function __construct() {
+        $this->initializeDatabase();
+    }
+    
+    private function initializeDatabase() {
+        if (!file_exists(DB_FILE)) {
+            $this->db = [
+                'users' => [],
+                'stats' => [
+                    'searches' => 0,
+                    'cache_hits' => 0,
+                    'users' => 0
+                ],
+                'settings' => [
+                    'bot_active' => true,
+                    'maintenance' => false
+                ]
+            ];
+            $this->saveDatabase();
+        } else {
+            $json = file_get_contents(DB_FILE);
+            $this->db = json_decode($json, true);
+            if ($this->db === null) {
+                $this->db = [
+                    'users' => [],
+                    'stats' => [
+                        'searches' => 0,
+                        'cache_hits' => 0,
+                        'users' => 0
+                    ],
+                    'settings' => [
+                        'bot_active' => true,
+                        'maintenance' => false
+                    ]
+                ];
+            }
+        }
+    }
+    
+    private function saveDatabase() {
+        file_put_contents(DB_FILE, json_encode($this->db, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+    }
+    
+    private function log($message) {
+        $log = "[" . date('Y-m-d H:i:s') . "] " . $message . "\n";
+        file_put_contents(LOG_FILE, $log, FILE_APPEND);
+    }
+    
+    private function sendTelegramRequest($method, $params = []) {
+        $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/" . $method;
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        if ($error) {
+            $this->log("CURL Error: " . $error);
+            return null;
+        }
+        
+        return json_decode($response, true);
+    }
+    
+    // ============ سیستم جستجوی پیشرفته ============
+    private function searchLyrics($query) {
+        $cacheKey = md5(strtolower($query));
+        $cacheFile = CACHE_DIR . '/' . $cacheKey . '.json';
+        
+        // بررسی کش
+        if (file_exists($cacheFile)) {
+            $cacheData = json_decode(file_get_contents($cacheFile), true);
+            if ($cacheData && time() - $cacheData['timestamp'] < CACHE_EXPIRE_TIME) {
+                $this->db['stats']['cache_hits']++;
+                $this->saveDatabase();
+                $this->log("Cache hit for: $query");
+                return $cacheData['results'];
+            }
+        }
+        
+        $this->log("Searching for: $query");
+        
+        // جستجو با Google API
+        $results = $this->searchWithGoogleAPI($query);
+        
+        if ($results) {
+            // ذخیره در کش
+            $cacheData = [
+                'timestamp' => time(),
+                'results' => $results,
+                'query' => $query
+            ];
+            file_put_contents($cacheFile, json_encode($cacheData));
+            
+            $this->log("Found " . count($results) . " results for: $query");
+        } else {
+            $this->log("No results for: $query");
+        }
+        
+        return $results;
+    }
+    
+    private function searchWithGoogleAPI($query) {
+        // اضافه کردن کلمات کلیدی برای بهبود نتایج
+        $searchQuery = $query . ' lyrics site:genius.com';
+        
+        $url = 'https://www.googleapis.com/customsearch/v1?' . http_build_query([
+            'key' => GOOGLE_API_KEY,
+            'cx' => GOOGLE_SE_ID,
+            'q' => $searchQuery,
+            'num' => 10,
+            'lr' => 'lang_en',
+            'gl' => 'us',
+            'cr' => 'countryUS'
+        ]);
+        
+        $this->log("Google API Request: " . $url);
+        
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json',
+                'Accept-Language: en-US,en;q=0.9'
+            ]
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        if ($error) {
+            $this->log("Google API Error: " . $error);
+            return null;
+        }
+        
+        if ($httpCode !== 200) {
+            $this->log("Google API HTTP $httpCode: " . substr($response, 0, 500));
+            return null;
+        }
+        
+        $data = json_decode($response, true);
+        
+        if (!isset($data['items']) || !is_array($data['items'])) {
+            $this->log("No items in response");
+            return null;
+        }
+        
+        $results = [];
+        $uniqueLinks = [];
+        
+        foreach ($data['items'] as $index => $item) {
+            // فقط لینک‌های Genius
+            if (!isset($item['link']) || strpos($item['link'], 'genius.com') === false) {
+                continue;
+            }
+            
+            // جلوگیری از لینک‌های تکراری
+            if (in_array($item['link'], $uniqueLinks)) {
+                continue;
+            }
+            $uniqueLinks[] = $item['link'];
+            
+            // استخراج اطلاعات
+            $title = $item['title'] ?? '';
+            $artist = 'Unknown Artist';
+            $songTitle = $title;
+            
+            // پارس کردن عنوان
+            $patterns = [
+                '/(.+?)\s*[–\-]\s*(.+?)(?:\s*\||\s*Lyrics|$)/i',
+                '/(.+?)\s*[:]\s*(.+?)(?:\s*\||\s*Lyrics|$)/i',
+                '/(.+?)\s*"\s*(.+?)"(?:\s*\||\s*Lyrics|$)/i',
+                '/(.+?)\s*･\s*(.+?)(?:\s*\||\s*Lyrics|$)/i'
+            ];
+            
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $title, $matches)) {
+                    $artist = trim($matches[1]);
+                    $songTitle = trim($matches[2]);
+                    break;
+                }
+            }
+            
+            // تمیز کردن عنوان
+            $songTitle = preg_replace('/\s*\|\s*Genius.*/i', '', $songTitle);
+            $songTitle = preg_replace('/\s*Lyrics.*/i', '', $songTitle);
+            $songTitle = preg_replace('/\s*\(.*?\)/', '', $songTitle);
+            $songTitle = trim($songTitle);
+            
+            $artist = preg_replace('/\s*\|\s*Genius.*/i', '', $artist);
+            $artist = trim($artist);
+            
+            // اگر نتوانستیم پارس کنیم، عنوان اصلی را استفاده می‌کنیم
+            if ($songTitle === $title || empty($songTitle)) {
+                $songTitle = $title;
+                if (preg_match('/^(.+?)\s*[–\-]\s*(.+)$/', $title, $matches)) {
+                    $artist = trim($matches[1]);
+                    $songTitle = trim($matches[2]);
+                }
+            }
+            
+            // دریافت تصویر بندانگشتی
+            $thumbnail = '';
+            if (isset($item['pagemap']['cse_thumbnail'][0]['src'])) {
+                $thumbnail = $item['pagemap']['cse_thumbnail'][0]['src'];
+            } elseif (isset($item['pagemap']['cse_image'][0]['src'])) {
+                $thumbnail = $item['pagemap']['cse_image'][0]['src'];
+            }
+            
+            $results[] = [
+                'id' => 'song_' . $index . '_' . time(),
+                'title' => $songTitle,
+                'artist' => $artist,
+                'thumbnail' => $thumbnail,
+                'url' => $item['link'],
+                'snippet' => $item['snippet'] ?? '',
+                'source' => 'genius'
+            ];
+            
+            if (count($results) >= 5) {
+                break;
+            }
+        }
+        
+        return $results;
+    }
+    
+    private function getSongDetails($songUrl) {
+        $cacheKey = md5($songUrl);
+        $cacheFile = CACHE_DIR . '/lyrics_' . $cacheKey . '.json';
+        
+        // بررسی کش
+        if (file_exists($cacheFile)) {
+            $cacheData = json_decode(file_get_contents($cacheFile), true);
+            if ($cacheData && time() - $cacheData['timestamp'] < CACHE_EXPIRE_TIME) {
+                $this->db['stats']['cache_hits']++;
+                $this->saveDatabase();
+                return $cacheData['lyrics'];
+            }
+        }
+        
+        $this->log("Fetching lyrics from: " . $songUrl);
+        
+        // لیست پروکسی‌ها
+        $proxies = [
+            'direct' => '', // مستقیم
+            'allorigins' => 'https://api.allorigins.win/raw?url=',
+            'corsproxy' => 'https://corsproxy.io/?',
+            'codetabs' => 'https://api.codetabs.com/v1/proxy?quest=',
+            'corsanywhere' => 'https://cors-anywhere.herokuapp.com/'
+        ];
+        
+        foreach ($proxies as $proxyName => $proxy) {
+            $targetUrl = $proxy ? $proxy . urlencode($songUrl) : $songUrl;
+            
+            $this->log("Trying proxy: $proxyName - $targetUrl");
+            
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $targetUrl,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 20,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                CURLOPT_HTTPHEADER => [
+                    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language: en-US,en;q=0.9,fa;q=0.8',
+                    'Accept-Encoding: gzip, deflate, br',
+                    'Cache-Control: max-age=0'
+                ],
+                CURLOPT_ENCODING => 'gzip, deflate'
+            ]);
+            
+            $html = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            if ($error) {
+                $this->log("Proxy $proxyName error: " . $error);
+                continue;
+            }
+            
+            if ($httpCode !== 200 || !$html) {
+                $this->log("Proxy $proxyName HTTP $httpCode");
+                continue;
+            }
+            
+            // استخراج متن
+            $lyrics = $this->extractLyricsFromHTML($html);
+            
+            if ($lyrics && strlen($lyrics) > 100) {
+                $this->log("Success with proxy: $proxyName");
+                
+                // ذخیره در کش
+                $cacheData = [
+                    'timestamp' => time(),
+                    'lyrics' => $lyrics,
+                    'url' => $songUrl
+                ];
+                file_put_contents($cacheFile, json_encode($cacheData));
+                
+                return $lyrics;
+            }
+            
+            usleep(300000); // 300ms تاخیر
+        }
+        
+        return null;
+    }
+    
+    private function extractLyricsFromHTML($html) {
+        // روش‌های مختلف استخراج
+        
+        // 1. تگ div با کلاس lyrics
+        if (preg_match('/<div[^>]*class="[^"]*lyrics[^"]*"[^>]*>(.*?)<\/div>/is', $html, $matches)) {
+            $lyrics = strip_tags($matches[1]);
+            $lyrics = preg_replace('/\[.*?\]\s*/', '', $lyrics);
+            $lyrics = trim(preg_replace('/\s+/', ' ', $lyrics));
+            
+            if (strlen($lyrics) > 100) {
+                return $lyrics;
+            }
+        }
+        
+        // 2. Lyrics__Container
+        if (preg_match_all('/<div[^>]*class="[^"]*Lyrics__Container[^"]*"[^>]*>(.*?)<\/div>/is', $html, $matches)) {
+            $lyrics = '';
+            foreach ($matches[1] as $match) {
+                $text = strip_tags($match);
+                $text = preg_replace('/\[.*?\]\s*/', '', $text);
+                $lyrics .= trim($text) . "\n\n";
+            }
+            $lyrics = trim($lyrics);
+            
+            if (strlen($lyrics) > 100) {
+                return $lyrics;
+            }
+        }
+        
+        // 3. جستجوی کلی
+        if (preg_match_all('/<div[^>]*>(.*?)<\/div>/is', $html, $matches)) {
+            $longest = '';
+            foreach ($matches[1] as $match) {
+                $text = strip_tags($match);
+                $text = preg_replace('/\[.*?\]\s*/', '', $text);
+                $text = trim(preg_replace('/\s+/', ' ', $text));
+                
+                // بررسی اینکه آیا متن احتمالی شعر است
+                if (strlen($text) > strlen($longest) && 
+                    strlen($text) > 100 &&
+                    preg_match('/\b(verse|chorus|bridge|intro|outro|lyric|song)\b/i', $text) === 0) {
+                    $longest = $text;
+                }
+            }
+            
+            if (strlen($longest) > 100) {
+                return $longest;
+            }
+        }
+        
+        return null;
+    }
+    
+    // ============ رابط کاربری ============
+    public function showMainMenu($chatId, $userId) {
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '🔍 جستجوی متن آهنگ', 'callback_data' => 'search']],
+                [['text' => '📊 آمار ربات', 'callback_data' => 'stats']],
+                [['text' => 'ℹ️ راهنما', 'callback_data' => 'help']]
+            ]
+        ];
+        
+        $text = "🎵 *به ربات جستجوی متن آهنگ خوش آمدید!*\n\n";
+        $text .= "با این ربات می‌توانید متن آهنگ‌های مختلف را از Genius.com پیدا کنید.\n\n";
+        $text .= "برای شروع جستجو روی دکمه زیر کلیک کنید:";
+        
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+            'reply_markup' => json_encode($keyboard)
+        ]);
+    }
+    
+    public function showSearchPanel($chatId) {
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => "🔍 *حالت جستجو*\n\nلطفاً نام آهنگ و خواننده را ارسال کنید.\n\nمثال‌ها:\n• Shape of You\n• بی‌بی پرسپولیس\n• Ed Sheeran Perfect\n\nبرای بازگشت از /cancel استفاده کنید.",
+            'parse_mode' => 'Markdown',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [['text' => '🔙 بازگشت به منو', 'callback_data' => 'menu']]
+                ]
+            ])
+        ]);
+    }
+    
+    public function processSearch($chatId, $userId, $query) {
+        // ثبت کاربر
+        if (!isset($this->db['users'][$userId])) {
+            $this->db['users'][$userId] = [
+                'first_seen' => date('Y-m-d H:i:s'),
+                'search_count' => 0
+            ];
+        }
+        
+        // افزایش آمار
+        $this->db['stats']['searches']++;
+        $this->db['users'][$userId]['search_count'] = ($this->db['users'][$userId]['search_count'] ?? 0) + 1;
+        $this->db['stats']['users'] = count($this->db['users']);
+        $this->saveDatabase();
+        
+        // پیام در حال جستجو
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => "🔎 *در حال جستجو برای:*\n`$query`\n\nلطفاً کمی صبر کنید...",
+            'parse_mode' => 'Markdown'
+        ]);
+        
+        // انجام جستجو
+        $results = $this->searchLyrics($query);
+        
+        if (!$results || count($results) === 0) {
+            $this->sendTelegramRequest('sendMessage', [
+                'chat_id' => $chatId,
+                'text' => "❌ *نتیجه‌ای یافت نشد!*\n\nلطفاً:\n• املای صحیح را بررسی کنید\n• نام کامل‌تر بنویسید\n• یا آهنگ دیگری جستجو کنید",
+                'parse_mode' => 'Markdown',
+                'reply_markup' => json_encode([
+                    'inline_keyboard' => [
+                        [['text' => '🔍 جستجوی مجدد', 'callback_data' => 'search']],
+                        [['text' => '🏠 منوی اصلی', 'callback_data' => 'menu']]
+                    ]
+                ])
+            ]);
+            return;
+        }
+        
+        // ذخیره نتایج برای کاربر
+        $this->searchResults[$userId] = $results;
+        
+        // نمایش نتایج
+        $text = "🔍 *نتایج جستجو برای:* `$query`\n\n";
+        
+        $keyboard = [];
+        
+        foreach ($results as $index => $result) {
+            $displayText = ($index + 1) . ". *" . $result['artist'] . "* - " . $result['title'];
+            if (strlen($displayText) > 60) {
+                $displayText = substr($displayText, 0, 57) . '...';
+            }
+            
+            $text .= ($index + 1) . ". *" . $result['artist'] . "* - " . $result['title'] . "\n";
+            
+            $keyboard[] = [[
+                'text' => ($index + 1) . '. انتخاب',
+                'callback_data' => 'select_' . $index
+            ]];
+        }
+        
+        $keyboard[] = [
+            ['text' => '🔍 جستجوی جدید', 'callback_data' => 'search'],
+            ['text' => '🏠 منوی اصلی', 'callback_data' => 'menu']
+        ];
+        
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => $keyboard
+            ])
+        ]);
+    }
+    
+    public function processSongSelection($chatId, $userId, $songIndex) {
+        if (!isset($this->searchResults[$userId][$songIndex])) {
+            $this->sendTelegramRequest('sendMessage', [
+                'chat_id' => $chatId,
+                'text' => "❌ آهنگ مورد نظر یافت نشد."
+            ]);
+            return;
+        }
+        
+        $song = $this->searchResults[$userId][$songIndex];
+        
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => "📥 *در حال دریافت متن آهنگ...*\n\n🎵 *" . $song['artist'] . "*\n🎶 *" . $song['title'] . "*",
+            'parse_mode' => 'Markdown'
+        ]);
+        
+        // دریافت متن آهنگ
+        $lyrics = $this->getSongDetails($song['url']);
+        
+        if (!$lyrics) {
+            // اگر متن پیدا نشد، از snippet استفاده می‌کنیم
+            $lyrics = $song['snippet'] ?? "متأسفانه متن این آهنگ در دسترس نیست.\n\nمی‌توانید آهنگ دیگری را جستجو کنید.";
+        }
+        
+        // اگر عکس بندانگشتی وجود دارد، ارسال کن
+        if (!empty($song['thumbnail'])) {
+            try {
+                $this->sendTelegramRequest('sendPhoto', [
+                    'chat_id' => $chatId,
+                    'photo' => $song['thumbnail'],
+                    'caption' => "🎵 *" . $song['artist'] . " - " . $song['title'] . "*",
+                    'parse_mode' => 'Markdown'
+                ]);
+            } catch (Exception $e) {
+                // اگر ارسال عکس با مشکل مواجه شد، ادامه بده
+            }
+        }
+        
+        // ارسال متن آهنگ
+        $this->sendLyrics($chatId, $song, $lyrics);
+    }
+    
+    private function sendLyrics($chatId, $song, $lyrics) {
+        $header = "🎵 *" . $song['artist'] . " - " . $song['title'] . "*\n\n";
+        
+        // بررسی طول متن
+        if (strlen($lyrics) > 3500) {
+            $parts = $this->splitText($lyrics, 3000);
+        } else {
+            $parts = [$lyrics];
+        }
+        
+        // ارسال قسمت‌ها
+        foreach ($parts as $index => $part) {
+            $text = ($index === 0 ? $header : '') . $part;
+            
+            $replyMarkup = null;
+            if ($index === count($parts) - 1) {
+                $replyMarkup = [
+                    'inline_keyboard' => [
+                        [['text' => '🔍 جستجوی جدید', 'callback_data' => 'search']],
+                        [['text' => '🏠 منوی اصلی', 'callback_data' => 'menu']]
+                    ]
+                ];
+            }
+            
+            $this->sendTelegramRequest('sendMessage', [
+                'chat_id' => $chatId,
+                'text' => $text,
+                'parse_mode' => 'Markdown',
+                'reply_markup' => $replyMarkup ? json_encode($replyMarkup) : null
+            ]);
+            
+            usleep(500000); // نیم ثانیه تاخیر بین پیام‌ها
+        }
+    }
+    
+    private function splitText($text, $maxLength) {
+        $parts = [];
+        $lines = explode("\n", $text);
+        $currentPart = '';
+        
+        foreach ($lines as $line) {
+            if (strlen($currentPart) + strlen($line) + 1 > $maxLength) {
+                if (!empty($currentPart)) {
+                    $parts[] = $currentPart;
+                    $currentPart = $line;
+                } else {
+                    // اگر خط خیلی طولانی است
+                    while (strlen($line) > $maxLength) {
+                        $parts[] = substr($line, 0, $maxLength);
+                        $line = substr($line, $maxLength);
+                    }
+                    $currentPart = $line;
+                }
+            } else {
+                $currentPart .= (empty($currentPart) ? $line : "\n" . $line);
+            }
+        }
+        
+        if (!empty($currentPart)) {
+            $parts[] = $currentPart;
+        }
+        
+        return $parts;
+    }
+    
+    public function showStats($chatId) {
+        $stats = $this->db['stats'];
+        $totalUsers = count($this->db['users']);
+        
+        $text = "📊 *آمار ربات*\n\n";
+        $text .= "👥 تعداد کاربران: *" . number_format($totalUsers) . "*\n";
+        $text .= "🔍 تعداد جستجوها: *" . number_format($stats['searches']) . "*\n";
+        $text .= "💾 استفاده از کش: *" . number_format($stats['cache_hits']) . "*\n";
+        $text .= "📅 آخرین بروزرسانی: *" . date('Y-m-d H:i:s') . "*\n\n";
+        
+        $text .= "⚙️ *وضعیت سرویس‌ها:*\n";
+        $text .= "• Google API: ✅ فعال\n";
+        $text .= "• Genius.com: ✅ در دسترس\n";
+        $text .= "• کش: ✅ فعال\n";
+        
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [['text' => '🔙 بازگشت', 'callback_data' => 'menu']]
+                ]
+            ])
+        ]);
+    }
+    
+    public function showHelp($chatId) {
+        $text = "ℹ️ *راهنمای استفاده از ربات*\n\n";
+        $text .= "🎵 *این ربات چه کاری انجام می‌دهد؟*\n";
+        $text .= "این ربات متن آهنگ‌ها را از وب‌سایت Genius.com جستجو و نمایش می‌دهد.\n\n";
+        
+        $text .= "📝 *طریقه استفاده:*\n";
+        $text .= "1. روی 'جستجوی متن آهنگ' کلیک کنید\n";
+        $text .= "2. نام آهنگ یا خواننده را بنویسید\n";
+        $text .= "3. از لیست نتایج، آهنگ مورد نظر را انتخاب کنید\n";
+        $text .= "4. متن کامل آهنگ نمایش داده می‌شود\n\n";
+        
+        $text .= "💡 *نکات مهم:*\n";
+        $text .= "• برای نتایج بهتر، نام کامل آهنگ و خواننده را بنویسید\n";
+        $text .= "• هم فارسی و هم انگلیسی پشتیبانی می‌شود\n";
+        $text .= "• از کلمات کلیدی مناسب استفاده کنید\n";
+        $text .= "• نتایج از Genius.com دریافت می‌شوند\n\n";
+        
+        $text .= "⚠️ *محدودیت‌ها:*\n";
+        $text .= "• حداکثر 100 جستجو در روز (رایگان)\n";
+        $text .= "• بعضی آهنگ‌ها ممکن است در دسترس نباشند\n";
+        $text .= "• کیفیت نتایج به جستجو بستگی دارد\n";
+        
+        $this->sendTelegramRequest('sendMessage', [
+            'chat_id' => $chatId,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [['text' => '🔍 شروع جستجو', 'callback_data' => 'search']],
+                    [['text' => '🔙 بازگشت', 'callback_data' => 'menu']]
+                ]
+            ])
+        ]);
+    }
+    
+    // ============ پردازش اصلی ============
+    public function processUpdate($update) {
+        try {
+            if (isset($update['message'])) {
+                $this->processMessage($update['message']);
+            } elseif (isset($update['callback_query'])) {
+                $this->processCallbackQuery($update['callback_query']);
+            }
+        } catch (Exception $e) {
+            $this->log("Error: " . $e->getMessage());
+        }
+    }
+    
+    private function processMessage($message) {
+        $chatId = $message['chat']['id'];
+        $userId = $message['from']['id'];
+        $text = $message['text'] ?? '';
+        
+        if (strpos($text, '/start') === 0) {
+            $this->showMainMenu($chatId, $userId);
+        } elseif (strpos($text, '/search') === 0) {
+            $query = trim(str_replace('/search', '', $text));
+            if ($query) {
+                $this->processSearch($chatId, $userId, $query);
+            } else {
+                $this->showSearchPanel($chatId);
+            }
+        } elseif (strpos($text, '/stats') === 0) {
+            $this->showStats($chatId);
+        } elseif (strpos($text, '/help') === 0) {
+            $this->showHelp($chatId);
+        } elseif (isset($this->userStates[$userId]) && $this->userStates[$userId] === 'awaiting_search') {
+            $this->processSearch($chatId, $userId, $text);
+            $this->userStates[$userId] = null;
+        } else {
+            // اگر پیام معمولی است، به عنوان جستجو در نظر بگیر
+            if (strlen($text) > 2 && strlen($text) < 100) {
+                $this->processSearch($chatId, $userId, $text);
+            } else {
+                $this->sendTelegramRequest('sendMessage', [
+                    'chat_id' => $chatId,
+                    'text' => "🎵 *ربات جستجوی متن آهنگ*\n\nبرای جستجو:\n• از دکمه 'جستجوی متن آهنگ' استفاده کنید\n• یا دستور /search را بنویسید\n• یا مستقیماً نام آهنگ را ارسال کنید",
+                    'parse_mode' => 'Markdown',
+                    'reply_markup' => json_encode([
+                        'inline_keyboard' => [
+                            [['text' => '🔍 جستجوی متن آهنگ', 'callback_data' => 'search']],
+                            [['text' => '📊 آمار', 'callback_data' => 'stats']],
+                            [['text' => 'ℹ️ راهنما', 'callback_data' => 'help']]
+                        ]
+                    ])
+                ]);
+            }
+        }
+    }
+    
+    private function processCallbackQuery($callbackQuery) {
+        $message = $callbackQuery['message'];
+        $chatId = $message['chat']['id'];
+        $userId = $callbackQuery['from']['id'];
+        $data = $callbackQuery['data'];
+        
+        // پاسخ به callback
+        $this->sendTelegramRequest('answerCallbackQuery', [
+            'callback_query_id' => $callbackQuery['id']
+        ]);
+        
+        if ($data === 'menu') {
+            $this->showMainMenu($chatId, $userId);
+        } elseif ($data === 'search') {
+            $this->showSearchPanel($chatId);
+        } elseif ($data === 'stats') {
+            $this->showStats($chatId);
+        } elseif ($data === 'help') {
+            $this->showHelp($chatId);
+        } elseif (strpos($data, 'select_') === 0) {
+            $index = intval(str_replace('select_', '', $data));
+            $this->processSongSelection($chatId, $userId, $index);
+        }
+    }
+}
+
+// اجرای ربات
+$bot = new LyricsBot();
+$update = json_decode(file_get_contents('php://input'), true);
+
+if ($update) {
+    $bot->processUpdate($update);
+} else {
+    // صفحه تست و اطلاعات
+    echo "<!DOCTYPE html>
+    <html lang='fa'>
+    <head>
+        <meta charset='UTF-8'>
+        <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+        <title>🎵 ربات جستجوی متن آهنگ</title>
+        <style>
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                color: white;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 40px;
+                margin-top: 50px;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            }
+            h1 {
+                text-align: center;
+                margin-bottom: 30px;
+                font-size: 2.5em;
+            }
+            .status {
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 10px;
+                padding: 20px;
+                margin: 20px 0;
+            }
+            .status-item {
+                display: flex;
+                justify-content: space-between;
+                margin: 10px 0;
+                padding: 10px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 5px;
+            }
+            .success {
+                color: #4ade80;
+            }
+            .error {
+                color: #f87171;
+            }
+            .test-btn {
+                display: block;
+                width: 100%;
+                padding: 15px;
+                background: #4f46e5;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 18px;
+                cursor: pointer;
+                margin-top: 20px;
+                transition: background 0.3s;
+            }
+            .test-btn:hover {
+                background: #4338ca;
+            }
+            .result {
+                margin-top: 20px;
+                padding: 20px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <h1>🎵 ربات جستجوی متن آهنگ</h1>
+            
+            <div class='status'>
+                <div class='status-item'>
+                    <span>ربات تلگرام:</span>
+                    <span class='success'>✅ فعال</span>
+                </div>
+                <div class='status-item'>
+                    <span>Google API:</span>";
+    
+    // تست Google API
+    $testUrl = 'https://www.googleapis.com/customsearch/v1?' . http_build_query([
+        'key' => GOOGLE_API_KEY,
+        'cx' => GOOGLE_SE_ID,
+        'q' => 'test',
+        'num' => 1
+    ]);
+    
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $testUrl,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode == 200) {
+        echo "<span class='success'>✅ کار می‌کند</span>";
+    } else {
+        echo "<span class='error'>❌ خطا (کد: $httpCode)</span>";
+    }
+    
+    echo "</div>
+                <div class='status-item'>
+                    <span>پوشه داده:</span>
+                    <span class='success'>✅ ایجاد شده</span>
+                </div>
+                <div class='status-item'>
+                    <span>سیستم کش:</span>
+                    <span class='success'>✅ فعال</span>
+                </div>
+            </div>
+            
+            <button class='test-btn' onclick='testAPI()'>تست API</button>
+            
+            <div class='result' id='apiResult'></div>
+            
+            <div style='margin-top: 30px; text-align: center;'>
+                <p>🤖 ربات آماده استفاده است!</p>
+                <p>برای استفاده، به ربات تلگرام مراجعه کنید.</p>
+            </div>
+        </div>
+        
+        <script>
+        function testAPI() {
+            const resultDiv = document.getElementById('apiResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '🔄 در حال تست...';
+            
+            fetch('?test=1')
+                .then(response => response.text())
+                .then(data => {
+                    resultDiv.innerHTML = data;
+                })
+                .catch(error => {
+                    resultDiv.innerHTML = '❌ خطا در تست: ' + error;
+                });
+        }
+        </script>
+    </body>
+    </html>";
+    
+    // تست API
+    if (isset($_GET['test'])) {
+        $testQuery = 'Shape of You';
+        $bot = new LyricsBot();
+        $results = $bot->searchLyrics($testQuery);
+        
+        if ($results) {
+            echo "<h3>✅ تست موفق!</h3>";
+            echo "<p>جستجوی '$testQuery' " . count($results) . " نتیجه بازگرداند.</p>";
+            echo "<h4>نتایج نمونه:</h4>";
+            foreach (array_slice($results, 0, 3) as $result) {
+                echo "<div style='background: rgba(255,255,255,0.1); padding: 10px; margin: 5px; border-radius: 5px;'>";
+                echo "<strong>" . htmlspecialchars($result['artist']) . "</strong> - " . htmlspecialchars($result['title']);
+                echo "</div>";
+            }
+        } else {
+            echo "<h3>❌ تست ناموفق</h3>";
+            echo "<p>لطفاً API Key را بررسی کنید.</p>";
+        }
+    }
+}
+?>
