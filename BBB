@@ -45,10 +45,10 @@ define('BOT_USERNAME', 'QRCodeScanerr_bot');
 define('CHANNEL', 'JBotss');
 define('MAX_FILE_SIZE', 10 * 1024 * 1024);
 
-// API های QRCode جدید با استفاده از qr-code-generator.com
+// API های QRCode - از qr-code-generator.com استفاده می‌کنیم
 define('QR_API_KEY', '14DwOdfh6ts-QxtAh0KSJhMGn56tidjGRVI93MUaW8fdQZqhuXr6ZDKizZP3UP9V');
-define('QR_ENCODE_1', 'https://api.qr-code-generator.com/v1/create?access-token=' . QR_API_KEY);
-define('QR_DECODE_1', 'https://api.qr-code-generator.com/v1/reader');
+define('QR_ENCODE_URL', 'https://api.qr-code-generator.com/v1/create');
+define('QR_DECODE_URL', 'https://api.qr-code-generator.com/v1/reader');
 
 /* ==================== توابع اصلی ==================== */
 function bot($method, $data = []) {
@@ -134,8 +134,8 @@ function trans($key, $user_id, $from_language_code = 'en') {
             'en' => "🔍 QR code content:\n\n{content}"
         ],
         'qr_not_detected' => [
-            'fa' => "⚠️ QR کد تشخیص داده نشد!\n\nراهکارها:\n1. کیفیت تصویر را افزایش دهید\n2. نور محیط را تنظیم کنید\n3. مطمئن شوید کپشن فقط علامت = باشد\n4. تصویر واضح و خوانا باشد",
-            'en' => "⚠️ QR code not detected!\n\nSolutions:\n1. Increase image quality\n2. Adjust lighting\n3. Make sure caption is only = symbol\n4. Ensure image is clear and readable"
+            'fa' => "⚠️ QR کد تشخیص داده نشد!\n\nراهکارها:\n1. کیفیت تصویر را افزایش دهید\n2. نور محیط را تنظیم کنید\n3. مطمئن شوید کپشن فقط علامت = باشد\n4. تصویر واضح و خوانا باشد\n5. فایل را دوباره ارسال کنید",
+            'en' => "⚠️ QR code not detected!\n\nSolutions:\n1. Increase image quality\n2. Adjust lighting\n3. Make sure caption is only = symbol\n4. Ensure image is clear and readable\n5. Try sending the file again"
         ],
         'join_channel' => [
             'fa' => "📣 عضویت در کانال",
@@ -180,6 +180,10 @@ function trans($key, $user_id, $from_language_code = 'en') {
         'exit_admin' => [
             'fa' => "✅ از حالت مدیریت خارج شدید.",
             'en' => "✅ Exited admin mode."
+        ],
+        'api_error' => [
+            'fa' => "⚠️ خطا در پردازش QR کد!\nلطفا چند لحظه دیگر تلاش کنید.",
+            'en' => "⚠️ Error processing QR code!\nPlease try again in a moment."
         ]
     ];
    
@@ -190,17 +194,26 @@ function trans($key, $user_id, $from_language_code = 'en') {
 }
 
 function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $user_id = null, $user_lang = 'en') {
-    // استفاده از API qr-code-generator.com برای ساخت QR کد
+    // روش اول: استفاده از qr-code-generator.com
     $qr_data = [
         'frame_name' => 'no-frame',
         'qr_code_text' => $content,
         'image_format' => 'PNG',
-        'qr_code_logo' => 'none',
+        'qr_code_logo' => 'no-logo',
         'foreground_color' => '#000000',
-        'background_color' => '#ffffff'
+        'background_color' => '#FFFFFF',
+        'marker_left_inner_color' => '#000000',
+        'marker_left_outer_color' => '#000000',
+        'marker_right_inner_color' => '#000000',
+        'marker_right_outer_color' => '#000000',
+        'marker_bottom_inner_color' => '#000000',
+        'marker_bottom_outer_color' => '#000000',
+        'marker_left_template' => 'version1',
+        'marker_right_template' => 'version1',
+        'marker_bottom_template' => 'version1'
     ];
     
-    $ch = curl_init(QR_ENCODE_1);
+    $ch = curl_init(QR_ENCODE_URL);
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
@@ -209,12 +222,14 @@ function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $
         CURLOPT_POSTFIELDS => json_encode($qr_data),
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'Accept: application/json'
+            'Accept: application/json',
+            'Authorization: Bearer ' . QR_API_KEY
         ]
     ]);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
     curl_close($ch);
     
     $qr_url = '';
@@ -225,11 +240,19 @@ function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $
         }
     }
     
-    // اگر API جواب نداد، از fallback استفاده کن
+    // روش دوم: اگر روش اول جواب نداد، از fallback استفاده کن
     if (empty($qr_url)) {
-        $qr_url = 'https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=' . urlencode($content);
+        error_log("QR generation failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error");
+        
+        // Fallback: استفاده از Google Charts API
+        $qr_url = 'https://chart.googleapis.com/chart?chs=500x500&cht=qr&chl=' . urlencode($content) . '&choe=UTF-8';
+        
+        // یا روش سوم: QuickChart
+        if (empty($qr_url)) {
+            $qr_url = 'https://quickchart.io/qr?text=' . urlencode($content) . '&size=500';
+        }
     }
-   
+    
     $reply_markup = null;
     if ($is_private) {
         $add_text = trans('add_to_group', $user_id, $user_lang);
@@ -247,7 +270,18 @@ function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $
    
     $caption_text = trans('qr_for', $user_id, $user_lang);
     $caption_text = str_replace('{content}', (mb_strlen($content) > 30 ? mb_substr($content, 0, 30) . '...' : $content), $caption_text);
-   
+    
+    // اگر QR ساخته نشد، پیام خطا بده
+    if (empty($qr_url)) {
+        $error_text = trans('api_error', $user_id, $user_lang);
+        return bot('sendMessage', [
+            'chat_id' => $chat_id,
+            'text' => $error_text,
+            'reply_to_message_id' => $reply_to,
+            'parse_mode' => 'HTML'
+        ]);
+    }
+    
     return bot('sendPhoto', [
         'chat_id' => $chat_id,
         'photo' => $qr_url,
@@ -267,8 +301,8 @@ function decodeQRCode($file_id) {
    
     $file_url = 'https://api.telegram.org/file/bot' . API_KEY . '/' . $file_info['result']['file_path'];
     
-    // روش اول: استفاده از API qr-code-generator.com
-    $temp_file = tempnam(sys_get_temp_dir(), 'qr');
+    // روش اول: دانلود فایل
+    $temp_file = tempnam(sys_get_temp_dir(), 'qr_');
     $file_content = file_get_contents($file_url);
     if ($file_content === false) {
         error_log("Failed to download file from: $file_url");
@@ -276,10 +310,10 @@ function decodeQRCode($file_id) {
     }
     file_put_contents($temp_file, $file_content);
     
-    // استفاده از API اصلی qr-code-generator.com
+    // روش 1: استفاده از API qr-code-generator.com
     $ch = curl_init();
     curl_setopt_array($ch, [
-        CURLOPT_URL => QR_DECODE_1,
+        CURLOPT_URL => QR_DECODE_URL,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT => 30,
         CURLOPT_SSL_VERIFYPEER => false,
@@ -289,7 +323,7 @@ function decodeQRCode($file_id) {
             'Authorization: Bearer ' . QR_API_KEY
         ],
         CURLOPT_POSTFIELDS => [
-            'file' => new CURLFile($temp_file)
+            'file' => new CURLFile($temp_file, mime_content_type($temp_file), basename($temp_file))
         ]
     ]);
     
@@ -298,46 +332,103 @@ function decodeQRCode($file_id) {
     $error = curl_error($ch);
     curl_close($ch);
     
-    unlink($temp_file); // حذف فایل موقت
+    $qr_content = false;
     
     if ($http_code == 200 && $response && !$error) {
         $result = json_decode($response, true);
-        if (isset($result[0]['type']) && $result[0]['type'] == 'qrcode' && isset($result[0]['symbol'][0]['data'])) {
-            return $result[0]['symbol'][0]['data'];
-        }
-        // فرمت جدید API
+        error_log("QR decode response: " . json_encode($result));
+        
+        // بررسی فرمت پاسخ
         if (isset($result['code']) && $result['code'] == 200 && isset($result['data'])) {
-            return $result['data'];
+            $qr_content = $result['data'];
+        } elseif (isset($result[0]['symbol'][0]['data'])) {
+            $qr_content = $result[0]['symbol'][0]['data'];
+        } elseif (isset($result['type']) && $result['type'] == 'qrcode' && isset($result['symbol'][0]['data'])) {
+            $qr_content = $result['symbol'][0]['data'];
+        }
+    } else {
+        error_log("QR decode failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error, Response=" . substr($response, 0, 500));
+    }
+    
+    // روش 2: اگر روش اول جواب نداد، از Google Vision API استفاده کن
+    if (!$qr_content) {
+        // دانلود فایل و تبدیل به base64
+        $base64_image = base64_encode($file_content);
+        
+        $google_api_data = [
+            'requests' => [
+                [
+                    'image' => [
+                        'content' => $base64_image
+                    ],
+                    'features' => [
+                        [
+                            'type' => 'DOCUMENT_TEXT_DETECTION',
+                            'maxResults' => 1
+                        ]
+                    ]
+                ]
+            ]
+        ];
+        
+        $ch = curl_init('https://vision.googleapis.com/v1/images:annotate?key=' . QR_API_KEY);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_POSTFIELDS => json_encode($google_api_data),
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json'
+            ]
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        if ($http_code == 200 && $response && !$error) {
+            $result = json_decode($response, true);
+            if (isset($result['responses'][0]['fullTextAnnotation']['text'])) {
+                $qr_content = $result['responses'][0]['fullTextAnnotation']['text'];
+            }
         }
     }
     
-    error_log("QR decode failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error, Response=" . substr($response, 0, 200));
-    
-    // روش دوم: استفاده از API قدیمی به عنوان fallback
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => 'https://api.qrserver.com/v1/read-qr-code/',
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => ['fileurl' => $file_url]
-    ]);
-    
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    if ($http_code == 200 && $response && !$error) {
-        $result = json_decode($response, true);
-        if (isset($result[0]['symbol'][0]['data']) && !empty($result[0]['symbol'][0]['data'])) {
-            return $result[0]['symbol'][0]['data'];
+    // روش 3: استفاده از API قدیمی
+    if (!$qr_content) {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => 'https://api.qrserver.com/v1/read-qr-code/',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => [
+                'fileurl' => $file_url
+            ]
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        if ($http_code == 200 && $response && !$error) {
+            $result = json_decode($response, true);
+            if (isset($result[0]['symbol'][0]['data']) && !empty($result[0]['symbol'][0]['data'])) {
+                $qr_content = $result[0]['symbol'][0]['data'];
+            }
         }
     }
     
-    error_log("QR decode failed with fallback API: HTTP_CODE=$http_code, Error=$error");
-    return false;
+    // حذف فایل موقت
+    if (file_exists($temp_file)) {
+        unlink($temp_file);
+    }
+    
+    return $qr_content ? trim($qr_content) : false;
 }
 
 function showHelp($chat_id, $user_id, $user_lang = 'en') {
@@ -859,7 +950,15 @@ if ($content_type === 'photo') {
             ]);
             exit();
         }
-        // اگر QR کد تشخیص داده نشد، به پردازش عادی ادامه بده
+        // اگر QR کد تشخیص داده نشد، پیام خطا بده
+        $error_text = trans('qr_not_detected', $user_id, $language_code);
+        bot('sendMessage', [
+            'chat_id' => $chat_id,
+            'text' => $error_text,
+            'reply_to_message_id' => $message_id,
+            'parse_mode' => 'HTML'
+        ]);
+        exit();
     }
    
     // در گروه فقط وقتی که کپشن = داره
