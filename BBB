@@ -1,773 +1,932 @@
 <?php
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
+/* ==================== تنظیمات پایه ==================== */
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__.'/error.log');
 error_reporting(E_ALL);
 
-// تنظیمات اصلی
-define('BOT_TOKEN', '7735298785:AAEoKk3OtpUe_0YmYuGkS0k0hhOMGwZe2Vw');
-define('ADMIN_ID', 5107034738);
-define('MAX_LYRICS_LENGTH', 4000);
-define('LOG_FILE', 'bot_logs.log');
-define('DB_FILE', 'data/bot_db.json');
-define('CACHE_DIR', 'data/cache');
-define('CACHE_EXPIRE_TIME', 86400);
+// ایجاد فایل‌های ضروری
+$required_files = [
+    'members.txt' => '',
+    'membersRecent.txt' => '',
+    'groups.txt' => '',
+    'step.txt' => 'none',
+    'lockChannel.txt' => 'yes',
+    'bot_status.txt' => 'on',
+    'error.log' => '',
+    'admin_activity.log' => '',
+    'user_languages.txt' => ''
+];
 
-// ایجاد ساختار پوشه‌ها
-if (!file_exists('data')) mkdir('data', 0755, true);
-if (!file_exists(CACHE_DIR)) mkdir(CACHE_DIR, 0755, true);
-
-// توابع کمکی
-if (!function_exists('str_starts_with')) {
-    function str_starts_with($haystack, $needle) {
-        return substr($haystack, 0, strlen($needle)) === $needle;
+foreach ($required_files as $file => $content) {
+    if (!file_exists($file)) {
+        file_put_contents($file, $content);
+        chmod($file, 0644);
     }
 }
 
-class LyricsBot {
-    private $db;
-    private $searchResults = [];
+// بررسی وضعیت ربات
+$bot_status = trim(file_get_contents('bot_status.txt'));
+if ($bot_status === 'off') {
+    $input = file_get_contents('php://input');
+    $update = json_decode($input, true);
+    $from = $update['message']['from'] ?? $update['edited_message']['from'] ?? $update['callback_query']['from'] ?? null;
+    $user_id = $from['id'] ?? null;
+   
+    if ($user_id != ADMIN_ID) {
+        exit();
+    }
+}
+
+/* ==================== تنظیمات ربات ==================== */
+define('API_KEY', '7491373246:AAEB5GCCyhdkXksAwk0A9heElp4KdIJ4-LA');
+define('ADMIN_ID', '5107034738');
+define('BOT_USERNAME', 'QRCodeScanerr_bot');
+define('CHANNEL', 'JBotss');
+define('MAX_FILE_SIZE', 10 * 1024 * 1024);
+
+// API های QRCode جدید با استفاده از qr-code-generator.com
+define('QR_API_KEY', '14DwOdfh6ts-QxtAh0KSJhMGn56tidjGRVI93MUaW8fdQZqhuXr6ZDKizZP3UP9V');
+define('QR_ENCODE_1', 'https://api.qr-code-generator.com/v1/create?access-token=' . QR_API_KEY);
+define('QR_DECODE_1', 'https://api.qr-code-generator.com/v1/reader');
+
+/* ==================== توابع اصلی ==================== */
+function bot($method, $data = []) {
+    $url = 'https://api.telegram.org/bot' . API_KEY . '/' . $method;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POSTFIELDS => $data,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
     
-    public function __construct() {
-        $this->initializeDatabase();
+    $result = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($http_code != 200 || !$result) {
+        error_log("Telegram API error: Method=$method, HTTP_CODE=$http_code, Response=$result");
     }
     
-    private function initializeDatabase() {
-        if (!file_exists(DB_FILE)) {
-            $this->db = [
-                'users' => [],
-                'stats' => [
-                    'searches' => 0,
-                    'cache_hits' => 0,
-                    'users' => 0
-                ]
-            ];
-            $this->saveDatabase();
-        } else {
-            $json = file_get_contents(DB_FILE);
-            $this->db = json_decode($json, true) ?: ['users' => [], 'stats' => ['searches' => 0, 'cache_hits' => 0, 'users' => 0]];
-        }
-    }
-    
-    private function saveDatabase() {
-        file_put_contents(DB_FILE, json_encode($this->db, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-    }
-    
-    private function sendTelegramRequest($method, $params = []) {
-        $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/" . $method;
-        
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-        
-        $response = curl_exec($ch);
-        curl_close($ch);
-        
-        return json_decode($response, true);
-    }
-    
-    // ============ سیستم جستجوی جایگزین ============
-    private function searchLyrics($query) {
-        $cacheKey = md5(strtolower($query));
-        $cacheFile = CACHE_DIR . '/' . $cacheKey . '.json';
-        
-        // بررسی کش
-        if (file_exists($cacheFile)) {
-            $cacheData = json_decode(file_get_contents($cacheFile), true);
-            if ($cacheData && time() - $cacheData['timestamp'] < CACHE_EXPIRE_TIME) {
-                $this->db['stats']['cache_hits']++;
-                $this->saveDatabase();
-                return $cacheData['results'];
+    return $result ? json_decode($result, true) : false;
+}
+
+// تابع جدید برای دریافت زبان کاربر
+function getUserLanguage($user_id, $from_language_code = 'en') {
+    $user_languages = file_get_contents('user_languages.txt');
+    $languages = [];
+   
+    if (!empty($user_languages)) {
+        $lines = explode(PHP_EOL, $user_languages);
+        foreach ($lines as $line) {
+            if (!empty($line)) {
+                $parts = explode(':', $line);
+                if (count($parts) >= 2) {
+                    $id = $parts[0];
+                    $lang = $parts[1];
+                    $languages[$id] = $lang;
+                }
             }
         }
-        
-        // روش 1: جستجو با DuckDuckGo (رایگان و بدون API)
-        $results = $this->searchWithDuckDuckGo($query);
-        
-        // روش 2: اگر DuckDuckGo کار نکرد، از API رایگان دیگر استفاده کن
-        if (!$results || count($results) < 3) {
-            $results = $this->searchWithLyricsOVH($query);
+    }
+   
+    if (isset($languages[$user_id])) {
+        return $languages[$user_id];
+    }
+   
+    $user_lang = ($from_language_code == 'fa' || $from_language_code == 'fa-ir') ? 'fa' : 'en';
+    $languages[$user_id] = $user_lang;
+   
+    $user_languages_content = '';
+    foreach ($languages as $id => $lang) {
+        $user_languages_content .= "$id:$lang" . PHP_EOL;
+    }
+    file_put_contents('user_languages.txt', $user_languages_content);
+   
+    return $user_lang;
+}
+
+// تابع جدید برای ترجمه متن‌ها
+function trans($key, $user_id, $from_language_code = 'en') {
+    $lang = getUserLanguage($user_id, $from_language_code);
+   
+    $translations = [
+        'welcome' => [
+            'fa' => "👋 <b>سلام {name}! به ربات QRCode خوش آمدید.</b>\n\n🔹 در چت خصوصی هر محتوایی را به QRCode تبدیل می‌کنم\n🔹 در گروه‌ها فقط به پیام‌های دارای + یا = پاسخ می‌دهم\n\n📌 برای اطلاعات بیشتر /help را ارسال کنید",
+            'en' => "👋 <b>Hello {name}! Welcome to QRCode bot.</b>\n\n🔹 In private chat I convert any content to QRCode\n🔹 In groups I only respond to messages with + or =\n\n📌 Send /help for more information"
+        ],
+        'help' => [
+            'fa' => "🤖 <b>راهنمای ربات QRCode</b>\n\n🔸 <b>در چت خصوصی:</b>\n - هر پیام یا رسانه‌ای ارسال کنید، ربات QRCode می‌سازد\n - تصاویر QR کد را به صورت خودکار پردازش می‌کند\n\n🔸 <b>در گروه‌ها:</b>\n - برای ساخت QRCode: پیام را با + شروع کنید (مثال: +سلام)\n - برای خواندن QRCode: تصویر QR را با کپشن = ارسال کنید\n - حداکثر حجم فایل: 10 مگابایت\n\n📣 کانال ما: @{channel}",
+            'en' => "🤖 <b>QRCode Bot Guide</b>\n\n🔸 <b>In private chat:</b>\n - Send any message or media, bot will create QRCode\n - Automatically processes QR code images\n\n🔸 <b>In groups:</b>\n - To create QRCode: Start message with + (example: +hello)\n - To read QRCode: Send QR image with caption =\n - Maximum file size: 10MB\n\n📣 Our channel: @{channel}"
+        ],
+        'channel_required' => [
+            'fa' => "🚨 برای استفاده از این قابلیت باید عضو کانال @{channel} باشید.",
+            'en' => "🚨 To use this feature you must join our channel @{channel}."
+        ],
+        'file_too_large' => [
+            'fa' => "⚠️ <b>حجم فایل ارسالی بیشتر از 10 مگابایت است!</b>\nلطفا فایل کوچکتری ارسال کنید.",
+            'en' => "⚠️ <b>File size exceeds 10MB!</b>\nPlease send a smaller file."
+        ],
+        'qr_content' => [
+            'fa' => "🔍 محتوای QR کد:\n\n{content}",
+            'en' => "🔍 QR code content:\n\n{content}"
+        ],
+        'qr_not_detected' => [
+            'fa' => "⚠️ QR کد تشخیص داده نشد!\n\nراهکارها:\n1. کیفیت تصویر را افزایش دهید\n2. نور محیط را تنظیم کنید\n3. مطمئن شوید کپشن فقط علامت = باشد\n4. تصویر واضح و خوانا باشد",
+            'en' => "⚠️ QR code not detected!\n\nSolutions:\n1. Increase image quality\n2. Adjust lighting\n3. Make sure caption is only = symbol\n4. Ensure image is clear and readable"
+        ],
+        'join_channel' => [
+            'fa' => "📣 عضویت در کانال",
+            'en' => "📣 Join Channel"
+        ],
+        'add_to_group' => [
+            'fa' => "➕ افزودن ربات به گروه",
+            'en' => "➕ Add to Group"
+        ],
+        'our_channel' => [
+            'fa' => "📣 کانال ما",
+            'en' => "📣 Our Channel"
+        ],
+        'qr_for' => [
+            'fa' => "🔳 QRCode برای: {content}",
+            'en' => "🔳 QRCode for: {content}"
+        ],
+        'admin_panel' => [
+            'fa' => "🧮 <b>به پنل مدیریت ربات خوش آمدید.</b>",
+            'en' => "🧮 <b>Welcome to bot admin panel.</b>"
+        ],
+        'bot_status_changed' => [
+            'fa' => "✅ ربات با موفقیت {status} شد.",
+            'en' => "✅ Bot successfully {status}."
+        ],
+        'channel_lock_changed' => [
+            'fa' => "✅ وضعیت قفل کانال تغییر کرد: {status}",
+            'en' => "✅ Channel lock status changed: {status}"
+        ],
+        'stats_message' => [
+            'fa' => "📊 <b>آمار ربات:</b>\n\n👤 تعداد کاربران: <b>{users}</b>\n👥 تعداد گروه‌ها: <b>{groups}</b>\n🔌 وضعیت ربات: <b>{bot_status}</b>",
+            'en' => "📊 <b>Bot statistics:</b>\n\n👤 Total users: <b>{users}</b>\n👥 Total groups: <b>{groups}</b>\n🔌 Bot status: <b>{bot_status}</b>"
+        ],
+        'broadcast_sent' => [
+            'fa' => "✅ پیام به {count} کاربر ارسال شد.",
+            'en' => "✅ Message sent to {count} users."
+        ],
+        'group_broadcast_sent' => [
+            'fa' => "✅ پیام به {count} گروه ارسال شد.",
+            'en' => "✅ Message sent to {count} groups."
+        ],
+        'exit_admin' => [
+            'fa' => "✅ از حالت مدیریت خارج شدید.",
+            'en' => "✅ Exited admin mode."
+        ]
+    ];
+   
+    $text = $translations[$key][$lang] ?? $translations[$key]['en'] ?? $key;
+    $text = str_replace('{channel}', CHANNEL, $text);
+   
+    return $text;
+}
+
+function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $user_id = null, $user_lang = 'en') {
+    // استفاده از API qr-code-generator.com برای ساخت QR کد
+    $qr_data = [
+        'frame_name' => 'no-frame',
+        'qr_code_text' => $content,
+        'image_format' => 'PNG',
+        'qr_code_logo' => 'none',
+        'foreground_color' => '#000000',
+        'background_color' => '#ffffff'
+    ];
+    
+    $ch = curl_init(QR_ENCODE_1);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_POSTFIELDS => json_encode($qr_data),
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json'
+        ]
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $qr_url = '';
+    if ($http_code == 200 && $response) {
+        $result = json_decode($response, true);
+        if (isset($result['url'])) {
+            $qr_url = $result['url'];
         }
-        
-        // ذخیره در کش
-        if ($results) {
-            $cacheData = ['timestamp' => time(), 'results' => $results];
-            file_put_contents($cacheFile, json_encode($cacheData));
-        }
-        
-        return $results;
     }
     
-    private function searchWithDuckDuckGo($query) {
-        $searchUrl = "https://html.duckduckgo.com/html/?q=" . urlencode($query . " lyrics genius.com");
-        
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $searchUrl,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            CURLOPT_HTTPHEADER => [
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language: en-US,en;q=0.9'
+    // اگر API جواب نداد، از fallback استفاده کن
+    if (empty($qr_url)) {
+        $qr_url = 'https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=' . urlencode($content);
+    }
+   
+    $reply_markup = null;
+    if ($is_private) {
+        $add_text = trans('add_to_group', $user_id, $user_lang);
+        $channel_text = trans('our_channel', $user_id, $user_lang);
+       
+        $reply_markup = json_encode([
+            'inline_keyboard' => [
+                [
+                    ['text' => $add_text, 'url' => 'https://t.me/' . BOT_USERNAME . '?startgroup=true'],
+                    ['text' => $channel_text, 'url' => 'https://t.me/' . CHANNEL]
+                ]
             ]
         ]);
-        
-        $html = curl_exec($ch);
-        curl_close($ch);
-        
-        if (!$html) return null;
-        
-        // پارس کردن HTML
-        $results = [];
-        
-        // پیدا کردن لینک‌های Genius
-        if (preg_match_all('/<a[^>]*class="result__url"[^>]*href="([^"]*genius\.com[^"]*)"[^>]*>.*?<a[^>]*class="result__title"[^>]*>(.*?)<\/a>/is', $html, $matches, PREG_SET_ORDER)) {
-            foreach ($matches as $index => $match) {
-                if ($index >= 5) break;
-                
-                $url = $match[1];
-                $title = strip_tags($match[2]);
-                
-                // استخراج هنرمند و آهنگ از عنوان
-                $artist = 'Unknown Artist';
-                $songTitle = $title;
-                
-                if (preg_match('/(.+?)\s*[–\-]\s*(.+?)(?:\s*\||\s*Lyrics|$)/i', $title, $titleMatches)) {
-                    $artist = trim($titleMatches[1]);
-                    $songTitle = trim($titleMatches[2]);
+    }
+   
+    $caption_text = trans('qr_for', $user_id, $user_lang);
+    $caption_text = str_replace('{content}', (mb_strlen($content) > 30 ? mb_substr($content, 0, 30) . '...' : $content), $caption_text);
+   
+    return bot('sendPhoto', [
+        'chat_id' => $chat_id,
+        'photo' => $qr_url,
+        'reply_to_message_id' => $reply_to,
+        'caption' => $caption_text,
+        'reply_markup' => $reply_markup,
+        'parse_mode' => 'HTML'
+    ]);
+}
+
+function decodeQRCode($file_id) {
+    $file_info = bot('getFile', ['file_id' => $file_id]);
+    if (!$file_info || !isset($file_info['result']['file_path'])) {
+        error_log("Failed to get file path from Telegram: File ID=$file_id");
+        return false;
+    }
+   
+    $file_url = 'https://api.telegram.org/file/bot' . API_KEY . '/' . $file_info['result']['file_path'];
+    
+    // روش اول: استفاده از API qr-code-generator.com
+    $temp_file = tempnam(sys_get_temp_dir(), 'qr');
+    $file_content = file_get_contents($file_url);
+    if ($file_content === false) {
+        error_log("Failed to download file from: $file_url");
+        return false;
+    }
+    file_put_contents($temp_file, $file_content);
+    
+    // استفاده از API اصلی qr-code-generator.com
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => QR_DECODE_1,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: multipart/form-data',
+            'Authorization: Bearer ' . QR_API_KEY
+        ],
+        CURLOPT_POSTFIELDS => [
+            'file' => new CURLFile($temp_file)
+        ]
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    
+    unlink($temp_file); // حذف فایل موقت
+    
+    if ($http_code == 200 && $response && !$error) {
+        $result = json_decode($response, true);
+        if (isset($result[0]['type']) && $result[0]['type'] == 'qrcode' && isset($result[0]['symbol'][0]['data'])) {
+            return $result[0]['symbol'][0]['data'];
+        }
+        // فرمت جدید API
+        if (isset($result['code']) && $result['code'] == 200 && isset($result['data'])) {
+            return $result['data'];
+        }
+    }
+    
+    error_log("QR decode failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error, Response=" . substr($response, 0, 200));
+    
+    // روش دوم: استفاده از API قدیمی به عنوان fallback
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => 'https://api.qrserver.com/v1/read-qr-code/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => ['fileurl' => $file_url]
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($http_code == 200 && $response && !$error) {
+        $result = json_decode($response, true);
+        if (isset($result[0]['symbol'][0]['data']) && !empty($result[0]['symbol'][0]['data'])) {
+            return $result[0]['symbol'][0]['data'];
+        }
+    }
+    
+    error_log("QR decode failed with fallback API: HTTP_CODE=$http_code, Error=$error");
+    return false;
+}
+
+function showHelp($chat_id, $user_id, $user_lang = 'en') {
+    $help_text = trans('help', $user_id, $user_lang);
+   
+    return bot('sendMessage', [
+        'chat_id' => $chat_id,
+        'text' => $help_text,
+        'parse_mode' => 'HTML',
+        'disable_web_page_preview' => true
+    ]);
+}
+
+function isMember($user_id, $chat_id) {
+    // اگر @ ندارد اضافه کن
+    if (strpos($chat_id, '@') === false) {
+        $chat_id = '@' . $chat_id;
+    }
+    
+    $result = bot('getChatMember', [
+        'chat_id' => $chat_id,
+        'user_id' => $user_id
+    ]);
+    
+    if ($result && isset($result['ok']) && $result['ok']) {
+        $status = $result['result']['status'] ?? '';
+        // بررسی وضعیت‌های مختلف عضویت
+        $is_member = in_array($status, ['creator', 'administrator', 'member', 'restricted']);
+        error_log("Membership check: User=$user_id, Channel=$chat_id, Status=$status, IsMember=" . ($is_member ? 'Yes' : 'No'));
+        return $is_member;
+    }
+    
+    error_log("Failed to check membership: User=$user_id, Chat=$chat_id, Result=" . json_encode($result));
+    return false;
+}
+
+function logAdminActivity($action) {
+    $log = "[" . date('Y-m-d H:i:s') . "] " . $action . PHP_EOL;
+    file_put_contents('admin_activity.log', $log, FILE_APPEND);
+}
+
+/* ==================== پردازش پیام ==================== */
+$input = file_get_contents('php://input');
+$update = json_decode($input, true);
+
+if (!$update) {
+    error_log("Invalid update received");
+    exit();
+}
+
+$message = $update['message'] ?? $update['edited_message'] ?? $update['channel_post'] ?? $update['callback_query']['message'] ?? null;
+$from = $update['message']['from'] ?? $update['edited_message']['from'] ?? $update['callback_query']['from'] ?? null;
+$chat = $update['message']['chat'] ?? $update['edited_message']['chat'] ?? $update['callback_query']['message']['chat'] ?? null;
+
+$user_id = $from['id'] ?? null;
+$first_name = $from['first_name'] ?? '';
+$last_name = $from['last_name'] ?? '';
+$full_name = trim("$first_name $last_name");
+$chat_id = $chat['id'] ?? null;
+$chat_type = $chat['type'] ?? 'private';
+$message_id = $update['message']['message_id'] ?? $update['callback_query']['message']['message_id'] ?? null;
+$message_text = $update['message']['text'] ?? $update['callback_query']['data'] ?? null;
+$caption = $update['message']['caption'] ?? null;
+$language_code = $from['language_code'] ?? 'en';
+
+$content_type = null;
+$file_id = null;
+$file_size = 0;
+
+if (isset($update['message']['photo'])) {
+    $photos = $update['message']['photo'];
+    $file_id = end($photos)['file_id'];
+    $file_size = end($photos)['file_size'] ?? 0;
+    $content_type = 'photo';
+} elseif (isset($update['message']['video'])) {
+    $file_id = $update['message']['video']['file_id'];
+    $file_size = $update['message']['video']['file_size'] ?? 0;
+    $content_type = 'video';
+} elseif (isset($update['message']['audio'])) {
+    $file_id = $update['message']['audio']['file_id'];
+    $file_size = $update['message']['audio']['file_size'] ?? 0;
+    $content_type = 'audio';
+} elseif (isset($update['message']['voice'])) {
+    $file_id = $update['message']['voice']['file_id'];
+    $file_size = $update['message']['voice']['file_size'] ?? 0;
+    $content_type = 'voice';
+} elseif (isset($update['message']['document'])) {
+    $file_id = $update['message']['document']['file_id'];
+    $file_size = $update['message']['document']['file_size'] ?? 0;
+    $content_type = 'document';
+}
+
+$members = file_get_contents('members.txt');
+$members_recent = file_get_contents('membersRecent.txt');
+$groups_list = file_get_contents('groups.txt');
+$current_step = file_get_contents('step.txt');
+$lock_channel = trim(file_get_contents('lockChannel.txt')) == 'yes';
+$bot_status = trim(file_get_contents('bot_status.txt'));
+
+if ($user_id && strpos($members, "$user_id,") === false && $user_id != ADMIN_ID) {
+    file_put_contents('members.txt', "$members$user_id,");
+}
+
+if ($chat_type && in_array($chat_type, ['group', 'supergroup']) && strpos($groups_list, "$chat_id,") === false) {
+    file_put_contents('groups.txt', "$groups_list$chat_id,");
+}
+
+if ($user_id && $user_id != ADMIN_ID) {
+    $members_recent = str_replace("$user_id,", '', $members_recent);
+    file_put_contents('membersRecent.txt', "$user_id,$members_recent");
+}
+
+/* ==================== دستورات عمومی ==================== */
+if ($message_text && preg_match('/^\/start$/i', trim($message_text))) {
+    $welcome = trans('welcome', $user_id, $language_code);
+    $welcome = str_replace('{name}', $full_name, $welcome);
+   
+    bot('sendMessage', [
+        'chat_id' => $chat_id,
+        'text' => $welcome,
+        'parse_mode' => 'HTML'
+    ]);
+    exit();
+}
+
+if ($message_text && preg_match('/^\/help$/i', trim($message_text))) {
+    showHelp($chat_id, $user_id, $language_code);
+    exit();
+}
+
+if ($message_text && preg_match('/^\/language$/i', trim($message_text))) {
+    $keyboard = json_encode([
+        'inline_keyboard' => [
+            [['text' => '🇮🇷 فارسی', 'callback_data' => 'setlang_fa']],
+            [['text' => '🇺🇸 English', 'callback_data' => 'setlang_en']]
+        ]
+    ]);
+   
+    $lang_text = getUserLanguage($user_id, $language_code) == 'fa' ?
+        '🌐 زبان فعلی: فارسی' : '🌐 Current language: English';
+   
+    bot('sendMessage', [
+        'chat_id' => $chat_id,
+        'text' => $lang_text . "\n\nلطفا زبان مورد نظر را انتخاب کنید / Please choose your language:",
+        'reply_markup' => $keyboard
+    ]);
+    exit();
+}
+
+if (isset($update['callback_query'])) {
+    $callback_data = $update['callback_query']['data'];
+    $callback_from = $update['callback_query']['from'];
+    $callback_user_id = $callback_from['id'];
+    $callback_message_id = $update['callback_query']['message']['message_id'];
+   
+    if (strpos($callback_data, 'setlang_') === 0) {
+        $selected_lang = substr($callback_data, 8);
+       
+        $user_languages = file_get_contents('user_languages.txt');
+        $languages = [];
+       
+        if (!empty($user_languages)) {
+            $lines = explode(PHP_EOL, $user_languages);
+            foreach ($lines as $line) {
+                if (!empty($line)) {
+                    $parts = explode(':', $line);
+                    if (count($parts) >= 2) {
+                        $id = $parts[0];
+                        $lang = $parts[1];
+                        $languages[$id] = $lang;
+                    }
                 }
-                
-                $results[] = [
-                    'id' => 'ddg_' . $index,
-                    'title' => $songTitle,
-                    'artist' => $artist,
-                    'url' => $url,
-                    'source' => 'genius'
-                ];
             }
         }
-        
-        return $results;
-    }
-    
-    private function searchWithLyricsOVH($query) {
-        // استفاده از Lyrics.ovh API که رایگان هست
-        $url = "https://api.lyrics.ovh/suggest/" . urlencode($query);
-        
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_USERAGENT => 'Mozilla/5.0'
+       
+        $languages[$callback_user_id] = $selected_lang;
+       
+        $new_user_languages = '';
+        foreach ($languages as $id => $lang) {
+            $new_user_languages .= "$id:$lang" . PHP_EOL;
+        }
+        file_put_contents('user_languages.txt', $new_user_languages);
+       
+        $success_text = $selected_lang == 'fa' ?
+            '✅ زبان به فارسی تغییر کرد' : '✅ Language changed to English';
+       
+        bot('answerCallbackQuery', [
+            'callback_query_id' => $update['callback_query']['id'],
+            'text' => $success_text
         ]);
-        
-        $response = curl_exec($ch);
-        curl_close($ch);
-        
-        $data = json_decode($response, true);
-        
-        if (!$data || !isset($data['data'])) {
-            return null;
-        }
-        
-        $results = [];
-        foreach (array_slice($data['data'], 0, 5) as $index => $item) {
-            $results[] = [
-                'id' => 'ovh_' . $index,
-                'title' => $item['title'] ?? 'Unknown',
-                'artist' => $item['artist']['name'] ?? 'Unknown Artist',
-                'url' => '',
-                'source' => 'lyrics_ovh'
-            ];
-        }
-        
-        return $results;
-    }
-    
-    private function getLyrics($songId, $artist, $title, $source) {
-        $cacheKey = md5($artist . '_' . $title);
-        $cacheFile = CACHE_DIR . '/lyrics_' . $cacheKey . '.json';
-        
-        // بررسی کش
-        if (file_exists($cacheFile)) {
-            $cacheData = json_decode(file_get_contents($cacheFile), true);
-            if ($cacheData && time() - $cacheData['timestamp'] < CACHE_EXPIRE_TIME) {
-                $this->db['stats']['cache_hits']++;
-                $this->saveDatabase();
-                return $cacheData['lyrics'];
-            }
-        }
-        
-        // بر اساس منبع، روش دریافت را انتخاب کن
-        if ($source === 'genius') {
-            $lyrics = $this->getGeniusLyrics($artist, $title);
-        } else {
-            $lyrics = $this->getLyricsOVHLyrics($artist, $title);
-        }
-        
-        // ذخیره در کش
-        if ($lyrics) {
-            $cacheData = ['timestamp' => time(), 'lyrics' => $lyrics];
-            file_put_contents($cacheFile, json_encode($cacheData));
-        }
-        
-        return $lyrics;
-    }
-    
-    private function getGeniusLyrics($artist, $title) {
-        // روش 1: جستجو در DuckDuckGo برای پیدا کردن لینک
-        $searchUrl = "https://html.duckduckgo.com/html/?q=" . urlencode("$artist $title lyrics genius.com");
-        
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $searchUrl,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+       
+        bot('editMessageText', [
+            'chat_id' => $chat_id,
+            'message_id' => $callback_message_id,
+            'text' => $success_text
         ]);
-        
-        $html = curl_exec($ch);
-        curl_close($ch);
-        
-        if (!$html) return null;
-        
-        // پیدا کردن اولین لینک Genius
-        if (preg_match('/<a[^>]*href="(https?:\/\/genius\.com\/[^"]*)"[^>]*>/i', $html, $matches)) {
-            $geniusUrl = $matches[1];
-            
-            // حالا متن را از Genius بگیر
-            return $this->scrapeGeniusPage($geniusUrl);
-        }
-        
-        return null;
     }
-    
-    private function scrapeGeniusPage($url) {
-        // پروکسی‌های رایگان
-        $proxies = [
-            'https://api.allorigins.win/raw?url=',
-            'https://corsproxy.io/?',
-            'https://api.codetabs.com/v1/proxy?quest='
-        ];
-        
-        foreach ($proxies as $proxy) {
-            $proxyUrl = $proxy . urlencode($url);
-            
-            $ch = curl_init();
-            curl_setopt_array($ch, [
-                CURLOPT_URL => $proxyUrl,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 20,
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_USERAGENT => 'Mozilla/5.0'
+    exit();
+}
+
+/* ==================== دستورات مدیریتی ==================== */
+if ($user_id == ADMIN_ID) {
+    if (preg_match('/^\/panel|^\/manage/i', trim($message_text))) {
+        file_put_contents('step.txt', 'admin_mode');
+       
+        $admin_keyboard = json_encode([
+            'keyboard' => [
+                [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
+                [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
+                [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
+                [['text' => '🔙 خروج از مدیریت']]
+            ],
+            'resize_keyboard' => true
+        ]);
+       
+        $panel_text = trans('admin_panel', $user_id, $language_code);
+       
+        bot('sendMessage', [
+            'chat_id' => $chat_id,
+            'text' => $panel_text,
+            'parse_mode' => 'HTML',
+            'reply_markup' => $admin_keyboard
+        ]);
+        exit();
+    }
+   
+    if ($current_step === 'admin_mode') {
+        if (trim($message_text) === '🔴 خاموش کردن ربات' || trim($message_text) === '🟢 روشن کردن ربات') {
+            $new_status = $bot_status == 'on' ? 'off' : 'on';
+            file_put_contents('bot_status.txt', $new_status);
+           
+            $status_text = trans('bot_status_changed', $user_id, $language_code);
+            $status_text = str_replace('{status}', ($new_status == 'on' ? 'روشن' : 'خاموش'), $status_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $status_text,
+                'parse_mode' => 'HTML'
             ]);
-            
-            $html = curl_exec($ch);
-            curl_close($ch);
-            
-            if (!$html) continue;
-            
-            // استخراج متن
-            if (preg_match('/<div[^>]*class="[^"]*lyrics[^"]*"[^>]*>(.*?)<\/div>/is', $html, $matches)) {
-                $lyrics = strip_tags($matches[1]);
-                $lyrics = preg_replace('/\[.*?\]\s*/', '', $lyrics);
-                $lyrics = trim($lyrics);
-                
-                if (strlen($lyrics) > 100) {
-                    return $lyrics;
-                }
-            }
-        }
-        
-        return null;
-    }
-    
-    private function getLyricsOVHLyrics($artist, $title) {
-        $url = "https://api.lyrics.ovh/v1/" . urlencode($artist) . "/" . urlencode($title);
-        
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => false
-        ]);
-        
-        $response = curl_exec($ch);
-        curl_close($ch);
-        
-        $data = json_decode($response, true);
-        
-        return $data['lyrics'] ?? null;
-    }
-    
-    // ============ رابط کاربری ساده ============
-    public function handleStart($chatId, $userId, $firstName) {
-        $this->registerUser($userId, $firstName);
-        
-        $message = "🎵 *به ربات جستجوی متن آهنگ خوش آمدید!*\n\n";
-        $message .= "من می‌تونم متن آهنگ‌های مختلف رو برات پیدا کنم.\n\n";
-        $message .= "✨ *دستورات:*\n";
-        $message .= "• /search [نام آهنگ] - جستجوی آهنگ\n";
-        $message .= "• /help - راهنمای استفاده\n";
-        $message .= "• /stats - آمار ربات\n\n";
-        $message .= "📍 *مثال:*\n";
-        $message .= "`/search Shape of You`\n";
-        $message .= "`/search بی‌بی پرسپولیس`";
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => $message,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [['text' => '🔍 جستجوی آهنگ', 'callback_data' => 'search']],
-                    [['text' => '📊 آمار ربات', 'callback_data' => 'stats']],
-                    [['text' => 'ℹ️ راهنما', 'callback_data' => 'help']]
-                ]
-            ])
-        ]);
-    }
-    
-    private function registerUser($userId, $firstName) {
-        if (!isset($this->db['users'][$userId])) {
-            $this->db['users'][$userId] = [
-                'name' => $firstName,
-                'first_seen' => date('Y-m-d H:i:s'),
-                'search_count' => 0
-            ];
-            $this->db['stats']['users'] = count($this->db['users']);
-            $this->saveDatabase();
-        }
-    }
-    
-    public function handleSearch($chatId, $userId, $query) {
-        if (empty($query)) {
-            $this->sendTelegramRequest('sendMessage', [
-                'chat_id' => $chatId,
-                'text' => "⚠️ لطفاً نام آهنگ را وارد کنید.\nمثال: `/search Shape of You`",
-                'parse_mode' => 'Markdown'
+            exit();
+        } elseif ($message_text === '📊 آمار کاربران') {
+            $all_members = array_filter(explode(',', $members));
+            $recent_members = array_filter(explode(',', $members_recent));
+            $all_groups = array_filter(explode(',', $groups_list));
+           
+            $total_members = count($all_members);
+            $total_groups = count($all_groups);
+           
+            $stats_text = trans('stats_message', $user_id, $language_code);
+            $stats_text = str_replace(
+                ['{users}', '{groups}', '{bot_status}'],
+                [$total_members, $total_groups, ($bot_status == 'on' ? 'روشن 🟢' : 'خاموش 🔴')],
+                $stats_text
+            );
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $stats_text,
+                'parse_mode' => 'HTML'
             ]);
-            return;
-        }
-        
-        // افزایش آمار
-        $this->db['stats']['searches']++;
-        $this->db['users'][$userId]['search_count'] = ($this->db['users'][$userId]['search_count'] ?? 0) + 1;
-        $this->saveDatabase();
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => "🔍 *در حال جستجو:*\n`$query`\n\nلطفاً صبر کنید...",
-            'parse_mode' => 'Markdown'
-        ]);
-        
-        $results = $this->searchLyrics($query);
-        
-        if (!$results || count($results) === 0) {
-            $this->sendTelegramRequest('sendMessage', [
-                'chat_id' => $chatId,
-                'text' => "❌ *نتیجه‌ای یافت نشد!*\n\nلطفاً:\n• نام دقیق‌تر بنویسید\n• یا آهنگ دیگری جستجو کنید",
-                'parse_mode' => 'Markdown',
+            exit();
+        } elseif ($message_text === '🔐 قفل کانال') {
+            $new_status = $lock_channel ? 'no' : 'yes';
+            file_put_contents('lockChannel.txt', $new_status);
+           
+            $lock_text = trans('channel_lock_changed', $user_id, $language_code);
+            $lock_text = str_replace('{status}', ($new_status == 'yes' ? 'فعال' : 'غیرفعال'), $lock_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $lock_text,
+                'parse_mode' => 'HTML'
+            ]);
+            exit();
+        } elseif ($message_text === '🚀 ارسال همگانی') {
+            file_put_contents('step.txt', 'broadcast_users');
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => '✉️ لطفا پیام خود را برای ارسال همگانی وارد کنید:',
                 'reply_markup' => json_encode([
-                    'inline_keyboard' => [
-                        [['text' => '🔍 جستجوی جدید', 'callback_data' => 'search']],
-                        [['text' => '🏠 منو', 'callback_data' => 'menu']]
-                    ]
+                    'keyboard' => [[['text' => '🔙 بازگشت']]],
+                    'resize_keyboard' => true
                 ])
             ]);
-            return;
-        }
-        
-        // ذخیره نتایج برای کاربر
-        $this->searchResults[$userId] = $results;
-        
-        // نمایش نتایج
-        $text = "✅ *" . count($results) . " نتیجه پیدا شد:*\n\n";
-        
-        $keyboard = [];
-        
-        foreach ($results as $index => $result) {
-            $text .= ($index + 1) . ". *" . $result['artist'] . "* - " . $result['title'] . "\n";
-            
-            $keyboard[] = [[
-                'text' => ($index + 1) . ". انتخاب",
-                'callback_data' => 'select_' . $index
-            ]];
-        }
-        
-        $keyboard[] = [
-            ['text' => '🔍 جستجوی جدید', 'callback_data' => 'search'],
-            ['text' => '🏠 منو', 'callback_data' => 'menu']
-        ];
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode(['inline_keyboard' => $keyboard])
-        ]);
-    }
-    
-    public function handleSongSelection($chatId, $userId, $songIndex) {
-        if (!isset($this->searchResults[$userId][$songIndex])) {
-            $this->sendTelegramRequest('sendMessage', [
-                'chat_id' => $chatId,
-                'text' => "❌ آهنگ مورد نظر یافت نشد."
-            ]);
-            return;
-        }
-        
-        $song = $this->searchResults[$userId][$songIndex];
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => "📥 *در حال دریافت متن...*\n\n🎵 *" . $song['artist'] . "*\n🎶 *" . $song['title'] . "*",
-            'parse_mode' => 'Markdown'
-        ]);
-        
-        // دریافت متن آهنگ
-        $lyrics = $this->getLyrics($song['id'], $song['artist'], $song['title'], $song['source'] ?? 'genius');
-        
-        if (!$lyrics) {
-            $this->sendTelegramRequest('sendMessage', [
-                'chat_id' => $chatId,
-                'text' => "❌ *متن آهنگ یافت نشد!*\n\nمتأسفانه نتوانستم متن این آهنگ را پیدا کنم.\nلطفاً آهنگ دیگری را امتحان کنید.",
-                'parse_mode' => 'Markdown',
+            exit();
+        } elseif ($message_text === '👥 ارسال به گروه‌ها') {
+            file_put_contents('step.txt', 'broadcast_groups');
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => '👥 لطفا پیام خود را برای ارسال به گروه‌ها وارد کنید:',
                 'reply_markup' => json_encode([
-                    'inline_keyboard' => [
-                        [['text' => '🔍 جستجوی جدید', 'callback_data' => 'search']],
-                        [['text' => '🏠 منو', 'callback_data' => 'menu']]
-                    ]
+                    'keyboard' => [[['text' => '🔙 بازگشت']]],
+                    'resize_keyboard' => true
                 ])
             ]);
-            return;
-        }
-        
-        // ارسال متن آهنگ
-        $this->sendLyrics($chatId, $song, $lyrics);
-    }
-    
-    private function sendLyrics($chatId, $song, $lyrics) {
-        $header = "🎵 *" . $song['artist'] . " - " . $song['title'] . "*\n\n";
-        
-        // تقسیم متن اگر طولانی باشد
-        if (strlen($lyrics) > 3000) {
-            $parts = str_split($lyrics, 3000);
-        } else {
-            $parts = [$lyrics];
-        }
-        
-        // ارسال قسمت‌ها
-        foreach ($parts as $index => $part) {
-            $text = ($index === 0 ? $header : '') . $part;
-            
-            $replyMarkup = null;
-            if ($index === count($parts) - 1) {
-                $replyMarkup = [
-                    'inline_keyboard' => [
-                        [['text' => '🔍 جستجوی جدید', 'callback_data' => 'search']],
-                        [['text' => '🏠 منو', 'callback_data' => 'menu']]
-                    ]
-                ];
-            }
-            
-            $this->sendTelegramRequest('sendMessage', [
-                'chat_id' => $chatId,
-                'text' => $text,
-                'parse_mode' => 'Markdown',
-                'reply_markup' => $replyMarkup ? json_encode($replyMarkup) : null
+            exit();
+        } elseif ($message_text === '🔙 خروج از مدیریت') {
+            file_put_contents('step.txt', 'none');
+           
+            $exit_text = trans('exit_admin', $user_id, $language_code);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $exit_text,
+                'reply_markup' => json_encode(['remove_keyboard' => true]),
+                'parse_mode' => 'HTML'
             ]);
-            
-            usleep(500000); // نیم ثانیه تاخیر
+            exit();
+        } elseif ($message_text === '🔙 بازگشت') {
+            file_put_contents('step.txt', 'admin_mode');
+            // ارسال مجدد پنل مدیریت
+            $admin_keyboard = json_encode([
+                'keyboard' => [
+                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
+                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
+                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
+                    [['text' => '🔙 خروج از مدیریت']]
+                ],
+                'resize_keyboard' => true
+            ]);
+           
+            $panel_text = trans('admin_panel', $user_id, $language_code);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $panel_text,
+                'parse_mode' => 'HTML',
+                'reply_markup' => $admin_keyboard
+            ]);
+            exit();
         }
     }
-    
-    public function handleStats($chatId) {
-        $stats = $this->db['stats'];
-        $totalUsers = count($this->db['users']);
-        
-        $text = "📊 *آمار ربات*\n\n";
-        $text .= "👥 کاربران کل: *" . number_format($totalUsers) . "*\n";
-        $text .= "🔍 جستجوها: *" . number_format($stats['searches']) . "*\n";
-        $text .= "💾 استفاده از کش: *" . number_format($stats['cache_hits']) . "*\n";
-        $text .= "📅 تاریخ: *" . date('Y-m-d H:i:s') . "*";
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [['text' => '🔙 بازگشت', 'callback_data' => 'menu']]
-                ]
-            ])
-        ]);
-    }
-    
-    public function handleHelp($chatId) {
-        $text = "ℹ️ *راهنمای ربات*\n\n";
-        $text .= "🎵 *دستورات اصلی:*\n";
-        $text .= "• /search [نام آهنگ] - جستجوی آهنگ\n";
-        $text .= "• /stats - نمایش آمار\n";
-        $text .= "• /help - این راهنما\n\n";
-        
-        $text .= "💡 *نکات:*\n";
-        $text .= "• نام آهنگ را به انگلیسی یا فارسی بنویسید\n";
-        $text .= "• برای نتایج بهتر، نام کامل آهنگ را بنویسید\n";
-        $text .= "• ربات از چندین منبع استفاده می‌کند\n\n";
-        
-        $text .= "⚡ *مثال‌ها:*\n";
-        $text .= "`/search Shape of You`\n";
-        $text .= "`/search بی‌بی پرسپولیس`\n";
-        $text .= "`/search Ed Sheeran Perfect`";
-        
-        $this->sendTelegramRequest('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [['text' => '🔍 شروع جستجو', 'callback_data' => 'search']],
-                    [['text' => '🔙 بازگشت', 'callback_data' => 'menu']]
-                ]
-            ])
-        ]);
-    }
-    
-    public function handleMenu($chatId, $userId) {
-        $this->handleStart($chatId, $userId, 'کاربر');
-    }
-    
-    // پردازش اصلی
-    public function processUpdate($update) {
-        if (isset($update['message'])) {
-            $message = $update['message'];
-            $chatId = $message['chat']['id'];
-            $userId = $message['from']['id'];
-            $text = $message['text'] ?? '';
-            
-            if (strpos($text, '/start') === 0) {
-                $firstName = $message['from']['first_name'] ?? 'کاربر';
-                $this->handleStart($chatId, $userId, $firstName);
-            } elseif (strpos($text, '/search') === 0) {
-                $query = trim(str_replace('/search', '', $text));
-                $this->handleSearch($chatId, $userId, $query);
-            } elseif (strpos($text, '/stats') === 0) {
-                $this->handleStats($chatId);
-            } elseif (strpos($text, '/help') === 0) {
-                $this->handleHelp($chatId);
-            } elseif (strlen($text) > 2) {
-                // اگر پیام معمولی است، به عنوان جستجو در نظر بگیر
-                $this->handleSearch($chatId, $userId, $text);
+   
+    if ($current_step === 'broadcast_users') {
+        if ($message_text && $message_text !== '🔙 بازگشت') {
+            $members_list = array_filter(explode(',', $members));
+            $success = 0;
+           
+            foreach ($members_list as $member_id) {
+                if (!empty($member_id)) {
+                    $result = bot('sendMessage', [
+                        'chat_id' => $member_id,
+                        'text' => $message_text,
+                        'parse_mode' => 'HTML'
+                    ]);
+                    if ($result && $result['ok']) {
+                        $success++;
+                    }
+                    usleep(50000);
+                }
             }
-        } elseif (isset($update['callback_query'])) {
-            $callback = $update['callback_query'];
-            $chatId = $callback['message']['chat']['id'];
-            $userId = $callback['from']['id'];
-            $data = $callback['data'];
-            
-            if ($data === 'menu') {
-                $this->handleMenu($chatId, $userId);
-            } elseif ($data === 'search') {
-                $this->sendTelegramRequest('sendMessage', [
-                    'chat_id' => $chatId,
-                    'text' => "🔍 لطفاً نام آهنگ را بنویسید:\n(مثلاً: Shape of You یا بی‌بی پرسپولیس)",
-                    'parse_mode' => 'Markdown'
-                ]);
-            } elseif ($data === 'stats') {
-                $this->handleStats($chatId);
-            } elseif ($data === 'help') {
-                $this->handleHelp($chatId);
-            } elseif (strpos($data, 'select_') === 0) {
-                $index = intval(str_replace('select_', '', $data));
-                $this->handleSongSelection($chatId, $userId, $index);
-            }
-            
-            // پاسخ به callback
-            $this->sendTelegramRequest('answerCallbackQuery', [
-                'callback_query_id' => $callback['id']
+           
+            file_put_contents('step.txt', 'admin_mode');
+           
+            $broadcast_text = trans('broadcast_sent', $user_id, $language_code);
+            $broadcast_text = str_replace('{count}', $success, $broadcast_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $broadcast_text,
+                'parse_mode' => 'HTML'
             ]);
+            exit();
+        } elseif ($message_text === '🔙 بازگشت') {
+            file_put_contents('step.txt', 'admin_mode');
+            $admin_keyboard = json_encode([
+                'keyboard' => [
+                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
+                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
+                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
+                    [['text' => '🔙 خروج از مدیریت']]
+                ],
+                'resize_keyboard' => true
+            ]);
+           
+            $panel_text = trans('admin_panel', $user_id, $language_code);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $panel_text,
+                'parse_mode' => 'HTML',
+                'reply_markup' => $admin_keyboard
+            ]);
+            exit();
+        }
+    }
+   
+    if ($current_step === 'broadcast_groups') {
+        if ($message_text && $message_text !== '🔙 بازگشت') {
+            $groups_list = array_filter(explode(',', $groups_list));
+            $success = 0;
+           
+            foreach ($groups_list as $group_id) {
+                if (!empty($group_id)) {
+                    $result = bot('sendMessage', [
+                        'chat_id' => $group_id,
+                        'text' => $message_text,
+                        'parse_mode' => 'HTML'
+                    ]);
+                    if ($result && $result['ok']) {
+                        $success++;
+                    }
+                    usleep(50000);
+                }
+            }
+           
+            file_put_contents('step.txt', 'admin_mode');
+           
+            $group_text = trans('group_broadcast_sent', $user_id, $language_code);
+            $group_text = str_replace('{count}', $success, $group_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $group_text,
+                'parse_mode' => 'HTML'
+            ]);
+            exit();
+        } elseif ($message_text === '🔙 بازگشت') {
+            file_put_contents('step.txt', 'admin_mode');
+            $admin_keyboard = json_encode([
+                'keyboard' => [
+                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
+                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
+                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
+                    [['text' => '🔙 خروج از مدیریت']]
+                ],
+                'resize_keyboard' => true
+            ]);
+           
+            $panel_text = trans('admin_panel', $user_id, $language_code);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $panel_text,
+                'parse_mode' => 'HTML',
+                'reply_markup' => $admin_keyboard
+            ]);
+            exit();
         }
     }
 }
 
-// اجرای ربات
-$bot = new LyricsBot();
-$update = json_decode(file_get_contents('php://input'), true);
+/* ==================== بررسی عضویت در کانال ==================== */
+function shouldCheckMembership($message_text, $caption, $chat_type) {
+    // در گروه فقط وقتی که کاربر می‌خواهد از ربات استفاده کند چک کن
+    if ($chat_type == 'private') {
+        return true;
+    }
+   
+    if (!in_array($chat_type, ['group', 'supergroup'])) {
+        return false;
+    }
+   
+    // فقط وقتی که کاربر می‌خواهد از ربات استفاده کند چک کن
+    if ($message_text && preg_match('/^\+/', trim($message_text))) {
+        return true;
+    }
+   
+    if ($caption && (preg_match('/^\+/', trim($caption)) || trim($caption) === '=')) {
+        return true;
+    }
+   
+    return false;
+}
 
-if ($update) {
-    $bot->processUpdate($update);
-} else {
-    // صفحه تست
-    echo "<!DOCTYPE html>
-    <html lang='fa' dir='rtl'>
-    <head>
-        <meta charset='UTF-8'>
-        <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-        <title>🎵 ربات جستجوی متن آهنگ</title>
-        <style>
-            body {
-                font-family: 'Vazir', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                color: white;
-                direction: rtl;
-            }
-            .container {
-                background: rgba(255, 255, 255, 0.1);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 40px;
-                margin-top: 50px;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            }
-            h1 {
-                text-align: center;
-                margin-bottom: 30px;
-                font-size: 2.5em;
-            }
-            .status {
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 10px;
-                padding: 20px;
-                margin: 20px 0;
-            }
-            .status-item {
-                display: flex;
-                justify-content: space-between;
-                margin: 10px 0;
-                padding: 10px;
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 5px;
-            }
-            .success { color: #4ade80; }
-            .test-btn {
-                display: block;
-                width: 100%;
-                padding: 15px;
-                background: #4f46e5;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                font-size: 18px;
-                cursor: pointer;
-                margin-top: 20px;
-                font-family: inherit;
-            }
-            .test-btn:hover { background: #4338ca; }
-            .result {
-                margin-top: 20px;
-                padding: 20px;
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                display: none;
-            }
-            .instructions {
-                margin-top: 30px;
-                padding: 20px;
-                background: rgba(255, 255, 255, 0.15);
-                border-radius: 10px;
-            }
-        </style>
-        <link href='https://cdn.jsdelivr.net/gh/rastikerdar/vazir-font@v30.1.0/dist/font-face.css' rel='stylesheet'>
-    </head>
-    <body>
-        <div class='container'>
-            <h1>🎵 ربات جستجوی متن آهنگ</h1>
-            
-            <div class='status'>
-                <div class='status-item'>
-                    <span>ربات تلگرام:</span>
-                    <span class='success'>✅ فعال</span>
-                </div>
-                <div class='status-item'>
-                    <span>سیستم جستجو:</span>
-                    <span class='success'>✅ DuckDuckGo + Lyrics.ovh</span>
-                </div>
-                <div class='status-item'>
-                    <span>سیستم کش:</span>
-                    <span class='success'>✅ فعال</span>
-                </div>
-                <div class='status-item'>
-                    <span>پوشه داده:</span>
-                    <span class='success'>✅ ایجاد شده</span>
-                </div>
-            </div>
-            
-            <button class='test-btn' onclick='testSearch()'>🔍 تست جستجو (Shape of You)</button>
-            
-            <div class='result' id='testResult'></div>
-            
-            <div class='instructions'>
-                <h3>📋 دستورالعمل:</h3>
-                <p>1. فایل را روی هاست آپلود کنید</p>
-                <p>2. در تلگرام به ربات مراجعه کنید</p>
-                <p>3. دستورات زیر را امتحان کنید:</p>
-                <ul>
-                    <li><code>/start</code> - شروع ربات</li>
-                    <li><code>/search Shape of You</code> - جستجوی آهنگ</li>
-                    <li><code>/search بی‌بی پرسپولیس</code> - جستجوی فارسی</li>
-                </ul>
-                <p>✅ این ربات بدون نیاز به API Key کار می‌کند!</p>
-            </div>
-        </div>
-        
-        <script>
-        function testSearch() {
-            const resultDiv = document.getElementById('testResult');
-            resultDiv.style.display = 'block';
-            resultDiv.innerHTML = '🔄 در حال تست جستجو...';
-            
-            fetch('?test=shape')
-                .then(response => response.text())
-                .then(data => {
-                    resultDiv.innerHTML = data;
-                })
-                .catch(error => {
-                    resultDiv.innerHTML = '❌ خطا در تست: ' + error;
-                });
-        }
-        </script>
-    </body>
-    </html>";
+// بررسی عضویت در کانال - این بخش بسیار مهم است
+if ($lock_channel && $user_id && $user_id != ADMIN_ID && shouldCheckMembership($message_text, $caption, $chat_type)) {
+    $is_member = isMember($user_id, CHANNEL);
     
-    // تست جستجو
-    if (isset($_GET['test'])) {
-        $testQuery = 'Shape of You';
-        $bot = new LyricsBot();
-        $results = $bot->searchLyrics($testQuery);
-        
-        if ($results) {
-            echo "<h3>✅ تست موفق!</h3>";
-            echo "<p>جستجوی '<strong>" . htmlspecialchars($testQuery) . "</strong>' " . count($results) . " نتیجه پیدا کرد.</p>";
-            echo "<h4>نمونه نتایج:</h4>";
-            foreach ($results as $index => $result) {
-                echo "<div style='background: rgba(255,255,255,0.1); padding: 10px; margin: 5px; border-radius: 5px;'>";
-                echo "<strong>" . ($index + 1) . ".</strong> ";
-                echo "<strong>" . htmlspecialchars($result['artist']) . "</strong> - " . htmlspecialchars($result['title']);
-                echo "<br><small>منبع: " . ($result['source'] ?? 'unknown') . "</small>";
-                echo "</div>";
-            }
-        } else {
-            echo "<h3>⚠️ تست جستجو</h3>";
-            echo "<p>سیستم در حال تست است. ممکن است کمی طول بکشد.</p>";
-            echo "<p>در تلگرام ربات را امتحان کنید.</p>";
-        }
+    if (!$is_member) {
+        $channel_text = trans('channel_required', $user_id, $language_code);
+        $join_text = trans('join_channel', $user_id, $language_code);
+       
+        $channel_markup = json_encode([
+            'inline_keyboard' => [
+                [['text' => $join_text, 'url' => "https://t.me/" . CHANNEL]]
+            ]
+        ]);
+       
+        bot('sendMessage', [
+            'chat_id' => $chat_id,
+            'text' => $channel_text,
+            'reply_markup' => $channel_markup,
+            'parse_mode' => 'HTML',
+            'reply_to_message_id' => $message_id
+        ]);
+        exit();
     }
 }
-?>
+
+/* ==================== محدودیت حجم فایل ==================== */
+if ($file_size > MAX_FILE_SIZE) {
+    $error_text = trans('file_too_large', $user_id, $language_code);
+   
+    bot('sendMessage', [
+        'chat_id' => $chat_id,
+        'text' => $error_text,
+        'reply_to_message_id' => $message_id,
+        'parse_mode' => 'HTML'
+    ]);
+    exit();
+}
+
+/* ==================== پردازش تصاویر QR کد ==================== */
+if ($content_type === 'photo') {
+    // در پیوی همیشه سعی کن QR کد رو بخونی
+    if ($chat_type == 'private') {
+        $qr_content = decodeQRCode($file_id);
+       
+        if ($qr_content) {
+            $qr_text = trans('qr_content', $user_id, $language_code);
+            $qr_text = str_replace('{content}', htmlspecialchars($qr_content), $qr_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $qr_text,
+                'reply_to_message_id' => $message_id,
+                'parse_mode' => 'HTML'
+            ]);
+            exit();
+        }
+        // اگر QR کد تشخیص داده نشد، به پردازش عادی ادامه بده
+    }
+   
+    // در گروه فقط وقتی که کپشن = داره
+    if ($chat_type != 'private' && $caption && trim($caption) === '=') {
+        $qr_content = decodeQRCode($file_id);
+       
+        if ($qr_content) {
+            $qr_text = trans('qr_content', $user_id, $language_code);
+            $qr_text = str_replace('{content}', htmlspecialchars($qr_content), $qr_text);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $qr_text,
+                'reply_to_message_id' => $message_id,
+                'parse_mode' => 'HTML'
+            ]);
+        } else {
+            $error_text = trans('qr_not_detected', $user_id, $language_code);
+           
+            bot('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $error_text,
+                'reply_to_message_id' => $message_id,
+                'parse_mode' => 'HTML'
+            ]);
+        }
+        exit();
+    }
+}
+
+/* ==================== پردازش گروهی ==================== */
+if (in_array($chat_type, ['group', 'supergroup'])) {
+    $should_process = false;
+    $content = null;
+   
+    if ($message_text && preg_match('/^\+/', trim($message_text))) {
+        $should_process = true;
+        $content = trim(substr(trim($message_text), 1));
+    } elseif ($caption && preg_match('/^\+/', trim($caption))) {
+        $should_process = true;
+        $content = trim(substr(trim($caption), 1));
+    }
+   
+    if ($should_process && $content) {
+        sendQRCode($chat_id, $content, $message_id, false, $user_id, $language_code);
+    }
+    exit();
+}
+
+/* ==================== پردازش چت خصوصی ==================== */
+elseif ($chat_type == 'private') {
+    if ($current_step !== 'admin_mode') {
+        if ($message_text && !preg_match('/^\/(start|help|language|panel)/i', trim($message_text))) {
+            sendQRCode($chat_id, $message_text, $message_id, true, $user_id, $language_code);
+        } elseif ($content_type && $current_step !== 'admin_mode') {
+            // فقط نوع محتوا رو ذکر کن، نه لینک فایل
+            $content_type_text = strtoupper($content_type);
+            $content = "";
+            
+            if ($caption) {
+                $content = $caption;
+            } else {
+                $content = "فایل " . $content_type_text;
+            }
+           
+            sendQRCode($chat_id, $content, $message_id, true, $user_id, $language_code);
+        }
+    }
+    exit();
+}
