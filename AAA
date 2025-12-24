@@ -1,25 +1,17 @@
 {
   "format_version": 1,
   "header": {
-    "name": "Player Distance Tracker",
-    "description": "Shows distance to tracked player below coords",
+    "name": "Simple Tracker",
+    "description": "Simple player tracker",
     "uuid": "ba47f8c8-febf-4ca7-8791-115a5fa1369a",
     "version": [1, 0, 0],
-    "min_engine_version": [1, 20, 0]
+    "min_engine_version": [1, 19, 0]
   },
   "modules": [
     {
-      "type": "script",
-      "language": "javascript",
+      "type": "data",
       "uuid": "aaeb499e-ed36-4ea7-8ce4-5d2cd0d43fa7",
-      "entry": "scripts/main.js",
       "version": [1, 0, 0]
-    }
-  ],
-  "dependencies": [
-    {
-      "module_name": "@minecraft/server",
-      "version": "1.8.0"
     }
   ]
 }
