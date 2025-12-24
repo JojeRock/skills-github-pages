@@ -1,4 +1,125 @@
-// فقط برای تست که پک لود میشه یا نه
-import { world } from '@minecraft/server';
+import { world, system } from '@minecraft/server';
 
-world.sendMessage("§aTracker loaded successfully!");
+// نمایش پیغام موفقیت‌آمیز لود شدن
+world.sendMessage("§a✅ Distance Tracker loaded successfully!");
+
+// ذخیره داده‌های ترک
+const trackingPlayers = new Map();
+
+// هندلر دستورات
+world.beforeEvents.chatSend.subscribe((event) => {
+    const player = event.sender;
+    const message = event.message;
+    
+    // دستور /track
+    if (message.startsWith('/track ')) {
+        event.cancel = true;
+        
+        const targetName = message.split(' ')[1];
+        
+        if (!targetName) {
+            player.sendMessage('§cUsage: /track [player name]');
+            return;
+        }
+        
+        // پیدا کردن بازیکن هدف
+        const allPlayers = [...world.getPlayers()];
+        const target = allPlayers.find(p => 
+            p.name.toLowerCase() === targetName.toLowerCase()
+        );
+        
+        if (!target) {
+            player.sendMessage(`§cPlayer "${targetName}" not found!`);
+            return;
+        }
+        
+        if (player.id === target.id) {
+            player.sendMessage('§cYou cannot track yourself!');
+            return;
+        }
+        
+        // ذخیره اطلاعات ترک
+        trackingPlayers.set(player.id, {
+            targetId: target.id,
+            targetName: target.name
+        });
+        
+        player.sendMessage(`§a✅ Now tracking: §e${target.name}`);
+        player.sendMessage('§7Distance will show below your coordinates');
+    }
+    
+    // دستور /cancel track
+    else if (message === '/cancel track') {
+        event.cancel = true;
+        
+        if (trackingPlayers.has(player.id)) {
+            const data = trackingPlayers.get(player.id);
+            trackingPlayers.delete(player.id);
+            
+            // پاک کردن HUD
+            player.onScreenDisplay.setActionBar('');
+            
+            player.sendMessage(`§c✗ Stopped tracking: §e${data.targetName}`);
+        } else {
+            player.sendMessage('§cYou are not tracking anyone!');
+        }
+    }
+});
+
+// سیستم آپدیت HUD
+system.runInterval(() => {
+    // برای هر بازیکنی که در حال ترک هست
+    for (const [trackerId, data] of trackingPlayers) {
+        const tracker = world.getPlayer(trackerId);
+        const target = world.getPlayer(data.targetId);
+        
+        // اگر یکی از بازیکنان وجود نداره
+        if (!tracker || !target) {
+            trackingPlayers.delete(trackerId);
+            continue;
+        }
+        
+        // محاسبه فاصله
+        const trackerPos = tracker.location;
+        const targetPos = target.location;
+        
+        // فقط فاصله X و Z
+        const dx = targetPos.x - trackerPos.x;
+        const dz = targetPos.z - trackerPos.z;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+        
+        // نمایش فاصله
+        tracker.onScreenDisplay.setActionBar(
+            `§7Tracking §e${data.targetName}§7: §a${Math.round(distance)} blocks`
+        );
+    }
+}, 20); // هر 1 ثانیه
+
+// هندلر خروج بازیکن
+world.afterEvents.playerLeave.subscribe((event) => {
+    const playerId = event.playerId;
+    
+    // اگر این بازیکن کسی رو ترک می‌کرد
+    if (trackingPlayers.has(playerId)) {
+        trackingPlayers.delete(playerId);
+    }
+    
+    // اگر کسی این بازیکن رو ترک می‌کرد
+    for (const [trackerId, data] of trackingPlayers) {
+        if (data.targetId === playerId) {
+            const tracker = world.getPlayer(trackerId);
+            if (tracker) {
+                tracker.sendMessage(`§c${data.targetName} left. Tracking stopped.`);
+                tracker.onScreenDisplay.setActionBar('');
+                trackingPlayers.delete(trackerId);
+            }
+        }
+    }
+});
+
+// نمایش دستورات کمک
+system.runTimeout(() => {
+    world.sendMessage("§6=== Distance Tracker Commands ===");
+    world.sendMessage("§7/track [name] §f- Start tracking a player");
+    world.sendMessage("§7/cancel track §f- Stop tracking");
+}, 100);
