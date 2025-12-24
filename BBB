@@ -1,1031 +1,260 @@
-<?php
-/* ==================== تنظیمات پایه ==================== */
-ini_set('display_errors', 0);
-ini_set('log_errors', 1);
-ini_set('error_log', __DIR__.'/error.log');
-error_reporting(E_ALL);
+import { world, system } from '@minecraft/server';
 
-// ایجاد فایل‌های ضروری
-$required_files = [
-    'members.txt' => '',
-    'membersRecent.txt' => '',
-    'groups.txt' => '',
-    'step.txt' => 'none',
-    'lockChannel.txt' => 'yes',
-    'bot_status.txt' => 'on',
-    'error.log' => '',
-    'admin_activity.log' => '',
-    'user_languages.txt' => ''
-];
+console.log('§a[Distance Tracker] Loaded!');
 
-foreach ($required_files as $file => $content) {
-    if (!file_exists($file)) {
-        file_put_contents($file, $content);
-        chmod($file, 0644);
-    }
-}
+// ذخیره اطلاعات ترک
+const trackingData = new Map();
 
-// بررسی وضعیت ربات
-$bot_status = trim(file_get_contents('bot_status.txt'));
-if ($bot_status === 'off') {
-    $input = file_get_contents('php://input');
-    $update = json_decode($input, true);
-    $from = $update['message']['from'] ?? $update['edited_message']['from'] ?? $update['callback_query']['from'] ?? null;
-    $user_id = $from['id'] ?? null;
-   
-    if ($user_id != ADMIN_ID) {
-        exit();
-    }
-}
+// برای تست در Single Player - لیست NPCها
+const npcList = new Map();
 
-/* ==================== تنظیمات ربات ==================== */
-define('API_KEY', '7491373246:AAEB5GCCyhdkXksAwk0A9heElp4KdIJ4-LA');
-define('ADMIN_ID', '5107034738');
-define('BOT_USERNAME', 'QRCodeScanerr_bot');
-define('CHANNEL', 'JBotss');
-define('MAX_FILE_SIZE', 10 * 1024 * 1024);
-
-// API های QRCode - از qr-code-generator.com استفاده می‌کنیم
-define('QR_API_KEY', '14DwOdfh6ts-QxtAh0KSJhMGn56tidjGRVI93MUaW8fdQZqhuXr6ZDKizZP3UP9V');
-define('QR_ENCODE_URL', 'https://api.qr-code-generator.com/v1/create');
-define('QR_DECODE_URL', 'https://api.qr-code-generator.com/v1/reader');
-
-/* ==================== توابع اصلی ==================== */
-function bot($method, $data = []) {
-    $url = 'https://api.telegram.org/bot' . API_KEY . '/' . $method;
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POSTFIELDS => $data,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_SSL_VERIFYPEER => false
-    ]);
+// وقتی بازیکن دستور می‌دهد
+world.beforeEvents.chatSend.subscribe((event) => {
+    const message = event.message;
+    const player = event.sender;
     
-    $result = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    if ($http_code != 200 || !$result) {
-        error_log("Telegram API error: Method=$method, HTTP_CODE=$http_code, Response=$result");
-    }
-    
-    return $result ? json_decode($result, true) : false;
-}
-
-// تابع جدید برای دریافت زبان کاربر
-function getUserLanguage($user_id, $from_language_code = 'en') {
-    $user_languages = file_get_contents('user_languages.txt');
-    $languages = [];
-   
-    if (!empty($user_languages)) {
-        $lines = explode(PHP_EOL, $user_languages);
-        foreach ($lines as $line) {
-            if (!empty($line)) {
-                $parts = explode(':', $line);
-                if (count($parts) >= 2) {
-                    $id = $parts[0];
-                    $lang = $parts[1];
-                    $languages[$id] = $lang;
-                }
-            }
-        }
-    }
-   
-    if (isset($languages[$user_id])) {
-        return $languages[$user_id];
-    }
-   
-    $user_lang = ($from_language_code == 'fa' || $from_language_code == 'fa-ir') ? 'fa' : 'en';
-    $languages[$user_id] = $user_lang;
-   
-    $user_languages_content = '';
-    foreach ($languages as $id => $lang) {
-        $user_languages_content .= "$id:$lang" . PHP_EOL;
-    }
-    file_put_contents('user_languages.txt', $user_languages_content);
-   
-    return $user_lang;
-}
-
-// تابع جدید برای ترجمه متن‌ها
-function trans($key, $user_id, $from_language_code = 'en') {
-    $lang = getUserLanguage($user_id, $from_language_code);
-   
-    $translations = [
-        'welcome' => [
-            'fa' => "👋 <b>سلام {name}! به ربات QRCode خوش آمدید.</b>\n\n🔹 در چت خصوصی هر محتوایی را به QRCode تبدیل می‌کنم\n🔹 در گروه‌ها فقط به پیام‌های دارای + یا = پاسخ می‌دهم\n\n📌 برای اطلاعات بیشتر /help را ارسال کنید",
-            'en' => "👋 <b>Hello {name}! Welcome to QRCode bot.</b>\n\n🔹 In private chat I convert any content to QRCode\n🔹 In groups I only respond to messages with + or =\n\n📌 Send /help for more information"
-        ],
-        'help' => [
-            'fa' => "🤖 <b>راهنمای ربات QRCode</b>\n\n🔸 <b>در چت خصوصی:</b>\n - هر پیام یا رسانه‌ای ارسال کنید، ربات QRCode می‌سازد\n - تصاویر QR کد را به صورت خودکار پردازش می‌کند\n\n🔸 <b>در گروه‌ها:</b>\n - برای ساخت QRCode: پیام را با + شروع کنید (مثال: +سلام)\n - برای خواندن QRCode: تصویر QR را با کپشن = ارسال کنید\n - حداکثر حجم فایل: 10 مگابایت\n\n📣 کانال ما: @{channel}",
-            'en' => "🤖 <b>QRCode Bot Guide</b>\n\n🔸 <b>In private chat:</b>\n - Send any message or media, bot will create QRCode\n - Automatically processes QR code images\n\n🔸 <b>In groups:</b>\n - To create QRCode: Start message with + (example: +hello)\n - To read QRCode: Send QR image with caption =\n - Maximum file size: 10MB\n\n📣 Our channel: @{channel}"
-        ],
-        'channel_required' => [
-            'fa' => "🚨 برای استفاده از این قابلیت باید عضو کانال @{channel} باشید.",
-            'en' => "🚨 To use this feature you must join our channel @{channel}."
-        ],
-        'file_too_large' => [
-            'fa' => "⚠️ <b>حجم فایل ارسالی بیشتر از 10 مگابایت است!</b>\nلطفا فایل کوچکتری ارسال کنید.",
-            'en' => "⚠️ <b>File size exceeds 10MB!</b>\nPlease send a smaller file."
-        ],
-        'qr_content' => [
-            'fa' => "🔍 محتوای QR کد:\n\n{content}",
-            'en' => "🔍 QR code content:\n\n{content}"
-        ],
-        'qr_not_detected' => [
-            'fa' => "⚠️ QR کد تشخیص داده نشد!\n\nراهکارها:\n1. کیفیت تصویر را افزایش دهید\n2. نور محیط را تنظیم کنید\n3. مطمئن شوید کپشن فقط علامت = باشد\n4. تصویر واضح و خوانا باشد\n5. فایل را دوباره ارسال کنید",
-            'en' => "⚠️ QR code not detected!\n\nSolutions:\n1. Increase image quality\n2. Adjust lighting\n3. Make sure caption is only = symbol\n4. Ensure image is clear and readable\n5. Try sending the file again"
-        ],
-        'join_channel' => [
-            'fa' => "📣 عضویت در کانال",
-            'en' => "📣 Join Channel"
-        ],
-        'add_to_group' => [
-            'fa' => "➕ افزودن ربات به گروه",
-            'en' => "➕ Add to Group"
-        ],
-        'our_channel' => [
-            'fa' => "📣 کانال ما",
-            'en' => "📣 Our Channel"
-        ],
-        'qr_for' => [
-            'fa' => "🔳 QRCode برای: {content}",
-            'en' => "🔳 QRCode for: {content}"
-        ],
-        'admin_panel' => [
-            'fa' => "🧮 <b>به پنل مدیریت ربات خوش آمدید.</b>",
-            'en' => "🧮 <b>Welcome to bot admin panel.</b>"
-        ],
-        'bot_status_changed' => [
-            'fa' => "✅ ربات با موفقیت {status} شد.",
-            'en' => "✅ Bot successfully {status}."
-        ],
-        'channel_lock_changed' => [
-            'fa' => "✅ وضعیت قفل کانال تغییر کرد: {status}",
-            'en' => "✅ Channel lock status changed: {status}"
-        ],
-        'stats_message' => [
-            'fa' => "📊 <b>آمار ربات:</b>\n\n👤 تعداد کاربران: <b>{users}</b>\n👥 تعداد گروه‌ها: <b>{groups}</b>\n🔌 وضعیت ربات: <b>{bot_status}</b>",
-            'en' => "📊 <b>Bot statistics:</b>\n\n👤 Total users: <b>{users}</b>\n👥 Total groups: <b>{groups}</b>\n🔌 Bot status: <b>{bot_status}</b>"
-        ],
-        'broadcast_sent' => [
-            'fa' => "✅ پیام به {count} کاربر ارسال شد.",
-            'en' => "✅ Message sent to {count} users."
-        ],
-        'group_broadcast_sent' => [
-            'fa' => "✅ پیام به {count} گروه ارسال شد.",
-            'en' => "✅ Message sent to {count} groups."
-        ],
-        'exit_admin' => [
-            'fa' => "✅ از حالت مدیریت خارج شدید.",
-            'en' => "✅ Exited admin mode."
-        ],
-        'api_error' => [
-            'fa' => "⚠️ خطا در پردازش QR کد!\nلطفا چند لحظه دیگر تلاش کنید.",
-            'en' => "⚠️ Error processing QR code!\nPlease try again in a moment."
-        ]
-    ];
-   
-    $text = $translations[$key][$lang] ?? $translations[$key]['en'] ?? $key;
-    $text = str_replace('{channel}', CHANNEL, $text);
-   
-    return $text;
-}
-
-function sendQRCode($chat_id, $content, $reply_to = null, $is_private = false, $user_id = null, $user_lang = 'en') {
-    // روش اول: استفاده از qr-code-generator.com
-    $qr_data = [
-        'frame_name' => 'no-frame',
-        'qr_code_text' => $content,
-        'image_format' => 'PNG',
-        'qr_code_logo' => 'no-logo',
-        'foreground_color' => '#000000',
-        'background_color' => '#FFFFFF',
-        'marker_left_inner_color' => '#000000',
-        'marker_left_outer_color' => '#000000',
-        'marker_right_inner_color' => '#000000',
-        'marker_right_outer_color' => '#000000',
-        'marker_bottom_inner_color' => '#000000',
-        'marker_bottom_outer_color' => '#000000',
-        'marker_left_template' => 'version1',
-        'marker_right_template' => 'version1',
-        'marker_bottom_template' => 'version1'
-    ];
-    
-    $ch = curl_init(QR_ENCODE_URL);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_POSTFIELDS => json_encode($qr_data),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'Authorization: Bearer ' . QR_API_KEY
-        ]
-    ]);
-    
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    $qr_url = '';
-    if ($http_code == 200 && $response) {
-        $result = json_decode($response, true);
-        if (isset($result['url'])) {
-            $qr_url = $result['url'];
-        }
-    }
-    
-    // روش دوم: اگر روش اول جواب نداد، از fallback استفاده کن
-    if (empty($qr_url)) {
-        error_log("QR generation failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error");
+    // دستور /track
+    if (message.startsWith('/track ')) {
+        event.cancel = true;
         
-        // Fallback: استفاده از Google Charts API
-        $qr_url = 'https://chart.googleapis.com/chart?chs=500x500&cht=qr&chl=' . urlencode($content) . '&choe=UTF-8';
+        const targetName = message.split(' ')[1];
         
-        // یا روش سوم: QuickChart
-        if (empty($qr_url)) {
-            $qr_url = 'https://quickchart.io/qr?text=' . urlencode($content) . '&size=500';
-        }
-    }
-    
-    $reply_markup = null;
-    if ($is_private) {
-        $add_text = trans('add_to_group', $user_id, $user_lang);
-        $channel_text = trans('our_channel', $user_id, $user_lang);
-       
-        $reply_markup = json_encode([
-            'inline_keyboard' => [
-                [
-                    ['text' => $add_text, 'url' => 'https://t.me/' . BOT_USERNAME . '?startgroup=true'],
-                    ['text' => $channel_text, 'url' => 'https://t.me/' . CHANNEL]
-                ]
-            ]
-        ]);
-    }
-   
-    $caption_text = trans('qr_for', $user_id, $user_lang);
-    $caption_text = str_replace('{content}', (mb_strlen($content) > 30 ? mb_substr($content, 0, 30) . '...' : $content), $caption_text);
-    
-    // اگر QR ساخته نشد، پیام خطا بده
-    if (empty($qr_url)) {
-        $error_text = trans('api_error', $user_id, $user_lang);
-        return bot('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $error_text,
-            'reply_to_message_id' => $reply_to,
-            'parse_mode' => 'HTML'
-        ]);
-    }
-    
-    return bot('sendPhoto', [
-        'chat_id' => $chat_id,
-        'photo' => $qr_url,
-        'reply_to_message_id' => $reply_to,
-        'caption' => $caption_text,
-        'reply_markup' => $reply_markup,
-        'parse_mode' => 'HTML'
-    ]);
-}
-
-function decodeQRCode($file_id) {
-    $file_info = bot('getFile', ['file_id' => $file_id]);
-    if (!$file_info || !isset($file_info['result']['file_path'])) {
-        error_log("Failed to get file path from Telegram: File ID=$file_id");
-        return false;
-    }
-   
-    $file_url = 'https://api.telegram.org/file/bot' . API_KEY . '/' . $file_info['result']['file_path'];
-    
-    // روش اول: دانلود فایل
-    $temp_file = tempnam(sys_get_temp_dir(), 'qr_');
-    $file_content = file_get_contents($file_url);
-    if ($file_content === false) {
-        error_log("Failed to download file from: $file_url");
-        return false;
-    }
-    file_put_contents($temp_file, $file_content);
-    
-    // روش 1: استفاده از API qr-code-generator.com
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => QR_DECODE_URL,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: multipart/form-data',
-            'Authorization: Bearer ' . QR_API_KEY
-        ],
-        CURLOPT_POSTFIELDS => [
-            'file' => new CURLFile($temp_file, mime_content_type($temp_file), basename($temp_file))
-        ]
-    ]);
-    
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    $qr_content = false;
-    
-    if ($http_code == 200 && $response && !$error) {
-        $result = json_decode($response, true);
-        error_log("QR decode response: " . json_encode($result));
+        // 1. اول بین بازیکنان واقعی جستجو کن
+        const allPlayers = [...world.getPlayers()];
+        let target = allPlayers.find(p => p.name.toLowerCase() === targetName.toLowerCase());
         
-        // بررسی فرمت پاسخ
-        if (isset($result['code']) && $result['code'] == 200 && isset($result['data'])) {
-            $qr_content = $result['data'];
-        } elseif (isset($result[0]['symbol'][0]['data'])) {
-            $qr_content = $result[0]['symbol'][0]['data'];
-        } elseif (isset($result['type']) && $result['type'] == 'qrcode' && isset($result['symbol'][0]['data'])) {
-            $qr_content = $result['symbol'][0]['data'];
+        // 2. اگر بازیکنی پیدا نشد، بین NPCها جستجو کن
+        if (!target && npcList.has(targetName.toLowerCase())) {
+            target = npcList.get(targetName.toLowerCase());
         }
-    } else {
-        error_log("QR decode failed with qr-code-generator.com: HTTP_CODE=$http_code, Error=$error, Response=" . substr($response, 0, 500));
-    }
-    
-    // روش 2: اگر روش اول جواب نداد، از Google Vision API استفاده کن
-    if (!$qr_content) {
-        // دانلود فایل و تبدیل به base64
-        $base64_image = base64_encode($file_content);
         
-        $google_api_data = [
-            'requests' => [
-                [
-                    'image' => [
-                        'content' => $base64_image
-                    ],
-                    'features' => [
-                        [
-                            'type' => 'DOCUMENT_TEXT_DETECTION',
-                            'maxResults' => 1
-                        ]
-                    ]
-                ]
-            ]
-        ];
-        
-        $ch = curl_init('https://vision.googleapis.com/v1/images:annotate?key=' . QR_API_KEY);
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_POSTFIELDS => json_encode($google_api_data),
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json'
-            ]
-        ]);
-        
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-        
-        if ($http_code == 200 && $response && !$error) {
-            $result = json_decode($response, true);
-            if (isset($result['responses'][0]['fullTextAnnotation']['text'])) {
-                $qr_content = $result['responses'][0]['fullTextAnnotation']['text'];
-            }
-        }
-    }
-    
-    // روش 3: استفاده از API قدیمی
-    if (!$qr_content) {
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => 'https://api.qrserver.com/v1/read-qr-code/',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => [
-                'fileurl' => $file_url
-            ]
-        ]);
-        
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-        
-        if ($http_code == 200 && $response && !$error) {
-            $result = json_decode($response, true);
-            if (isset($result[0]['symbol'][0]['data']) && !empty($result[0]['symbol'][0]['data'])) {
-                $qr_content = $result[0]['symbol'][0]['data'];
-            }
-        }
-    }
-    
-    // حذف فایل موقت
-    if (file_exists($temp_file)) {
-        unlink($temp_file);
-    }
-    
-    return $qr_content ? trim($qr_content) : false;
-}
-
-function showHelp($chat_id, $user_id, $user_lang = 'en') {
-    $help_text = trans('help', $user_id, $user_lang);
-   
-    return bot('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $help_text,
-        'parse_mode' => 'HTML',
-        'disable_web_page_preview' => true
-    ]);
-}
-
-function isMember($user_id, $chat_id) {
-    // اگر @ ندارد اضافه کن
-    if (strpos($chat_id, '@') === false) {
-        $chat_id = '@' . $chat_id;
-    }
-    
-    $result = bot('getChatMember', [
-        'chat_id' => $chat_id,
-        'user_id' => $user_id
-    ]);
-    
-    if ($result && isset($result['ok']) && $result['ok']) {
-        $status = $result['result']['status'] ?? '';
-        // بررسی وضعیت‌های مختلف عضویت
-        $is_member = in_array($status, ['creator', 'administrator', 'member', 'restricted']);
-        error_log("Membership check: User=$user_id, Channel=$chat_id, Status=$status, IsMember=" . ($is_member ? 'Yes' : 'No'));
-        return $is_member;
-    }
-    
-    error_log("Failed to check membership: User=$user_id, Chat=$chat_id, Result=" . json_encode($result));
-    return false;
-}
-
-function logAdminActivity($action) {
-    $log = "[" . date('Y-m-d H:i:s') . "] " . $action . PHP_EOL;
-    file_put_contents('admin_activity.log', $log, FILE_APPEND);
-}
-
-/* ==================== پردازش پیام ==================== */
-$input = file_get_contents('php://input');
-$update = json_decode($input, true);
-
-if (!$update) {
-    error_log("Invalid update received");
-    exit();
-}
-
-$message = $update['message'] ?? $update['edited_message'] ?? $update['channel_post'] ?? $update['callback_query']['message'] ?? null;
-$from = $update['message']['from'] ?? $update['edited_message']['from'] ?? $update['callback_query']['from'] ?? null;
-$chat = $update['message']['chat'] ?? $update['edited_message']['chat'] ?? $update['callback_query']['message']['chat'] ?? null;
-
-$user_id = $from['id'] ?? null;
-$first_name = $from['first_name'] ?? '';
-$last_name = $from['last_name'] ?? '';
-$full_name = trim("$first_name $last_name");
-$chat_id = $chat['id'] ?? null;
-$chat_type = $chat['type'] ?? 'private';
-$message_id = $update['message']['message_id'] ?? $update['callback_query']['message']['message_id'] ?? null;
-$message_text = $update['message']['text'] ?? $update['callback_query']['data'] ?? null;
-$caption = $update['message']['caption'] ?? null;
-$language_code = $from['language_code'] ?? 'en';
-
-$content_type = null;
-$file_id = null;
-$file_size = 0;
-
-if (isset($update['message']['photo'])) {
-    $photos = $update['message']['photo'];
-    $file_id = end($photos)['file_id'];
-    $file_size = end($photos)['file_size'] ?? 0;
-    $content_type = 'photo';
-} elseif (isset($update['message']['video'])) {
-    $file_id = $update['message']['video']['file_id'];
-    $file_size = $update['message']['video']['file_size'] ?? 0;
-    $content_type = 'video';
-} elseif (isset($update['message']['audio'])) {
-    $file_id = $update['message']['audio']['file_id'];
-    $file_size = $update['message']['audio']['file_size'] ?? 0;
-    $content_type = 'audio';
-} elseif (isset($update['message']['voice'])) {
-    $file_id = $update['message']['voice']['file_id'];
-    $file_size = $update['message']['voice']['file_size'] ?? 0;
-    $content_type = 'voice';
-} elseif (isset($update['message']['document'])) {
-    $file_id = $update['message']['document']['file_id'];
-    $file_size = $update['message']['document']['file_size'] ?? 0;
-    $content_type = 'document';
-}
-
-$members = file_get_contents('members.txt');
-$members_recent = file_get_contents('membersRecent.txt');
-$groups_list = file_get_contents('groups.txt');
-$current_step = file_get_contents('step.txt');
-$lock_channel = trim(file_get_contents('lockChannel.txt')) == 'yes';
-$bot_status = trim(file_get_contents('bot_status.txt'));
-
-if ($user_id && strpos($members, "$user_id,") === false && $user_id != ADMIN_ID) {
-    file_put_contents('members.txt', "$members$user_id,");
-}
-
-if ($chat_type && in_array($chat_type, ['group', 'supergroup']) && strpos($groups_list, "$chat_id,") === false) {
-    file_put_contents('groups.txt', "$groups_list$chat_id,");
-}
-
-if ($user_id && $user_id != ADMIN_ID) {
-    $members_recent = str_replace("$user_id,", '', $members_recent);
-    file_put_contents('membersRecent.txt', "$user_id,$members_recent");
-}
-
-/* ==================== دستورات عمومی ==================== */
-if ($message_text && preg_match('/^\/start$/i', trim($message_text))) {
-    $welcome = trans('welcome', $user_id, $language_code);
-    $welcome = str_replace('{name}', $full_name, $welcome);
-   
-    bot('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $welcome,
-        'parse_mode' => 'HTML'
-    ]);
-    exit();
-}
-
-if ($message_text && preg_match('/^\/help$/i', trim($message_text))) {
-    showHelp($chat_id, $user_id, $language_code);
-    exit();
-}
-
-if ($message_text && preg_match('/^\/language$/i', trim($message_text))) {
-    $keyboard = json_encode([
-        'inline_keyboard' => [
-            [['text' => '🇮🇷 فارسی', 'callback_data' => 'setlang_fa']],
-            [['text' => '🇺🇸 English', 'callback_data' => 'setlang_en']]
-        ]
-    ]);
-   
-    $lang_text = getUserLanguage($user_id, $language_code) == 'fa' ?
-        '🌐 زبان فعلی: فارسی' : '🌐 Current language: English';
-   
-    bot('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $lang_text . "\n\nلطفا زبان مورد نظر را انتخاب کنید / Please choose your language:",
-        'reply_markup' => $keyboard
-    ]);
-    exit();
-}
-
-if (isset($update['callback_query'])) {
-    $callback_data = $update['callback_query']['data'];
-    $callback_from = $update['callback_query']['from'];
-    $callback_user_id = $callback_from['id'];
-    $callback_message_id = $update['callback_query']['message']['message_id'];
-   
-    if (strpos($callback_data, 'setlang_') === 0) {
-        $selected_lang = substr($callback_data, 8);
-       
-        $user_languages = file_get_contents('user_languages.txt');
-        $languages = [];
-       
-        if (!empty($user_languages)) {
-            $lines = explode(PHP_EOL, $user_languages);
-            foreach ($lines as $line) {
-                if (!empty($line)) {
-                    $parts = explode(':', $line);
-                    if (count($parts) >= 2) {
-                        $id = $parts[0];
-                        $lang = $parts[1];
-                        $languages[$id] = $lang;
-                    }
-                }
-            }
-        }
-       
-        $languages[$callback_user_id] = $selected_lang;
-       
-        $new_user_languages = '';
-        foreach ($languages as $id => $lang) {
-            $new_user_languages .= "$id:$lang" . PHP_EOL;
-        }
-        file_put_contents('user_languages.txt', $new_user_languages);
-       
-        $success_text = $selected_lang == 'fa' ?
-            '✅ زبان به فارسی تغییر کرد' : '✅ Language changed to English';
-       
-        bot('answerCallbackQuery', [
-            'callback_query_id' => $update['callback_query']['id'],
-            'text' => $success_text
-        ]);
-       
-        bot('editMessageText', [
-            'chat_id' => $chat_id,
-            'message_id' => $callback_message_id,
-            'text' => $success_text
-        ]);
-    }
-    exit();
-}
-
-/* ==================== دستورات مدیریتی ==================== */
-if ($user_id == ADMIN_ID) {
-    if (preg_match('/^\/panel|^\/manage/i', trim($message_text))) {
-        file_put_contents('step.txt', 'admin_mode');
-       
-        $admin_keyboard = json_encode([
-            'keyboard' => [
-                [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
-                [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
-                [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
-                [['text' => '🔙 خروج از مدیریت']]
-            ],
-            'resize_keyboard' => true
-        ]);
-       
-        $panel_text = trans('admin_panel', $user_id, $language_code);
-       
-        bot('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $panel_text,
-            'parse_mode' => 'HTML',
-            'reply_markup' => $admin_keyboard
-        ]);
-        exit();
-    }
-   
-    if ($current_step === 'admin_mode') {
-        if (trim($message_text) === '🔴 خاموش کردن ربات' || trim($message_text) === '🟢 روشن کردن ربات') {
-            $new_status = $bot_status == 'on' ? 'off' : 'on';
-            file_put_contents('bot_status.txt', $new_status);
-           
-            $status_text = trans('bot_status_changed', $user_id, $language_code);
-            $status_text = str_replace('{status}', ($new_status == 'on' ? 'روشن' : 'خاموش'), $status_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $status_text,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '📊 آمار کاربران') {
-            $all_members = array_filter(explode(',', $members));
-            $recent_members = array_filter(explode(',', $members_recent));
-            $all_groups = array_filter(explode(',', $groups_list));
-           
-            $total_members = count($all_members);
-            $total_groups = count($all_groups);
-           
-            $stats_text = trans('stats_message', $user_id, $language_code);
-            $stats_text = str_replace(
-                ['{users}', '{groups}', '{bot_status}'],
-                [$total_members, $total_groups, ($bot_status == 'on' ? 'روشن 🟢' : 'خاموش 🔴')],
-                $stats_text
-            );
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $stats_text,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '🔐 قفل کانال') {
-            $new_status = $lock_channel ? 'no' : 'yes';
-            file_put_contents('lockChannel.txt', $new_status);
-           
-            $lock_text = trans('channel_lock_changed', $user_id, $language_code);
-            $lock_text = str_replace('{status}', ($new_status == 'yes' ? 'فعال' : 'غیرفعال'), $lock_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $lock_text,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '🚀 ارسال همگانی') {
-            file_put_contents('step.txt', 'broadcast_users');
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => '✉️ لطفا پیام خود را برای ارسال همگانی وارد کنید:',
-                'reply_markup' => json_encode([
-                    'keyboard' => [[['text' => '🔙 بازگشت']]],
-                    'resize_keyboard' => true
-                ])
-            ]);
-            exit();
-        } elseif ($message_text === '👥 ارسال به گروه‌ها') {
-            file_put_contents('step.txt', 'broadcast_groups');
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => '👥 لطفا پیام خود را برای ارسال به گروه‌ها وارد کنید:',
-                'reply_markup' => json_encode([
-                    'keyboard' => [[['text' => '🔙 بازگشت']]],
-                    'resize_keyboard' => true
-                ])
-            ]);
-            exit();
-        } elseif ($message_text === '🔙 خروج از مدیریت') {
-            file_put_contents('step.txt', 'none');
-           
-            $exit_text = trans('exit_admin', $user_id, $language_code);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $exit_text,
-                'reply_markup' => json_encode(['remove_keyboard' => true]),
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '🔙 بازگشت') {
-            file_put_contents('step.txt', 'admin_mode');
-            // ارسال مجدد پنل مدیریت
-            $admin_keyboard = json_encode([
-                'keyboard' => [
-                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
-                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
-                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
-                    [['text' => '🔙 خروج از مدیریت']]
-                ],
-                'resize_keyboard' => true
-            ]);
-           
-            $panel_text = trans('admin_panel', $user_id, $language_code);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $panel_text,
-                'parse_mode' => 'HTML',
-                'reply_markup' => $admin_keyboard
-            ]);
-            exit();
-        }
-    }
-   
-    if ($current_step === 'broadcast_users') {
-        if ($message_text && $message_text !== '🔙 بازگشت') {
-            $members_list = array_filter(explode(',', $members));
-            $success = 0;
-           
-            foreach ($members_list as $member_id) {
-                if (!empty($member_id)) {
-                    $result = bot('sendMessage', [
-                        'chat_id' => $member_id,
-                        'text' => $message_text,
-                        'parse_mode' => 'HTML'
-                    ]);
-                    if ($result && $result['ok']) {
-                        $success++;
-                    }
-                    usleep(50000);
-                }
-            }
-           
-            file_put_contents('step.txt', 'admin_mode');
-           
-            $broadcast_text = trans('broadcast_sent', $user_id, $language_code);
-            $broadcast_text = str_replace('{count}', $success, $broadcast_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $broadcast_text,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '🔙 بازگشت') {
-            file_put_contents('step.txt', 'admin_mode');
-            $admin_keyboard = json_encode([
-                'keyboard' => [
-                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
-                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
-                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
-                    [['text' => '🔙 خروج از مدیریت']]
-                ],
-                'resize_keyboard' => true
-            ]);
-           
-            $panel_text = trans('admin_panel', $user_id, $language_code);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $panel_text,
-                'parse_mode' => 'HTML',
-                'reply_markup' => $admin_keyboard
-            ]);
-            exit();
-        }
-    }
-   
-    if ($current_step === 'broadcast_groups') {
-        if ($message_text && $message_text !== '🔙 بازگشت') {
-            $groups_list = array_filter(explode(',', $groups_list));
-            $success = 0;
-           
-            foreach ($groups_list as $group_id) {
-                if (!empty($group_id)) {
-                    $result = bot('sendMessage', [
-                        'chat_id' => $group_id,
-                        'text' => $message_text,
-                        'parse_mode' => 'HTML'
-                    ]);
-                    if ($result && $result['ok']) {
-                        $success++;
-                    }
-                    usleep(50000);
-                }
-            }
-           
-            file_put_contents('step.txt', 'admin_mode');
-           
-            $group_text = trans('group_broadcast_sent', $user_id, $language_code);
-            $group_text = str_replace('{count}', $success, $group_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $group_text,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        } elseif ($message_text === '🔙 بازگشت') {
-            file_put_contents('step.txt', 'admin_mode');
-            $admin_keyboard = json_encode([
-                'keyboard' => [
-                    [['text' => '📊 آمار کاربران'], ['text' => '🔐 قفل کانال']],
-                    [['text' => '🚀 ارسال همگانی'], ['text' => '👥 ارسال به گروه‌ها']],
-                    [['text' => ($bot_status == 'on' ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات')]],
-                    [['text' => '🔙 خروج از مدیریت']]
-                ],
-                'resize_keyboard' => true
-            ]);
-           
-            $panel_text = trans('admin_panel', $user_id, $language_code);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $panel_text,
-                'parse_mode' => 'HTML',
-                'reply_markup' => $admin_keyboard
-            ]);
-            exit();
-        }
-    }
-}
-
-/* ==================== بررسی عضویت در کانال ==================== */
-function shouldCheckMembership($message_text, $caption, $chat_type) {
-    // در گروه فقط وقتی که کاربر می‌خواهد از ربات استفاده کند چک کن
-    if ($chat_type == 'private') {
-        return true;
-    }
-   
-    if (!in_array($chat_type, ['group', 'supergroup'])) {
-        return false;
-    }
-   
-    // فقط وقتی که کاربر می‌خواهد از ربات استفاده کند چک کن
-    if ($message_text && preg_match('/^\+/', trim($message_text))) {
-        return true;
-    }
-   
-    if ($caption && (preg_match('/^\+/', trim($caption)) || trim($caption) === '=')) {
-        return true;
-    }
-   
-    return false;
-}
-
-// بررسی عضویت در کانال - این بخش بسیار مهم است
-if ($lock_channel && $user_id && $user_id != ADMIN_ID && shouldCheckMembership($message_text, $caption, $chat_type)) {
-    $is_member = isMember($user_id, CHANNEL);
-    
-    if (!$is_member) {
-        $channel_text = trans('channel_required', $user_id, $language_code);
-        $join_text = trans('join_channel', $user_id, $language_code);
-       
-        $channel_markup = json_encode([
-            'inline_keyboard' => [
-                [['text' => $join_text, 'url' => "https://t.me/" . CHANNEL]]
-            ]
-        ]);
-       
-        bot('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $channel_text,
-            'reply_markup' => $channel_markup,
-            'parse_mode' => 'HTML',
-            'reply_to_message_id' => $message_id
-        ]);
-        exit();
-    }
-}
-
-/* ==================== محدودیت حجم فایل ==================== */
-if ($file_size > MAX_FILE_SIZE) {
-    $error_text = trans('file_too_large', $user_id, $language_code);
-   
-    bot('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $error_text,
-        'reply_to_message_id' => $message_id,
-        'parse_mode' => 'HTML'
-    ]);
-    exit();
-}
-
-/* ==================== پردازش تصاویر QR کد ==================== */
-if ($content_type === 'photo') {
-    // در پیوی همیشه سعی کن QR کد رو بخونی
-    if ($chat_type == 'private') {
-        $qr_content = decodeQRCode($file_id);
-       
-        if ($qr_content) {
-            $qr_text = trans('qr_content', $user_id, $language_code);
-            $qr_text = str_replace('{content}', htmlspecialchars($qr_content), $qr_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $qr_text,
-                'reply_to_message_id' => $message_id,
-                'parse_mode' => 'HTML'
-            ]);
-            exit();
-        }
-        // اگر QR کد تشخیص داده نشد، پیام خطا بده
-        $error_text = trans('qr_not_detected', $user_id, $language_code);
-        bot('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $error_text,
-            'reply_to_message_id' => $message_id,
-            'parse_mode' => 'HTML'
-        ]);
-        exit();
-    }
-   
-    // در گروه فقط وقتی که کپشن = داره
-    if ($chat_type != 'private' && $caption && trim($caption) === '=') {
-        $qr_content = decodeQRCode($file_id);
-       
-        if ($qr_content) {
-            $qr_text = trans('qr_content', $user_id, $language_code);
-            $qr_text = str_replace('{content}', htmlspecialchars($qr_content), $qr_text);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $qr_text,
-                'reply_to_message_id' => $message_id,
-                'parse_mode' => 'HTML'
-            ]);
-        } else {
-            $error_text = trans('qr_not_detected', $user_id, $language_code);
-           
-            bot('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $error_text,
-                'reply_to_message_id' => $message_id,
-                'parse_mode' => 'HTML'
-            ]);
-        }
-        exit();
-    }
-}
-
-/* ==================== پردازش گروهی ==================== */
-if (in_array($chat_type, ['group', 'supergroup'])) {
-    $should_process = false;
-    $content = null;
-   
-    if ($message_text && preg_match('/^\+/', trim($message_text))) {
-        $should_process = true;
-        $content = trim(substr(trim($message_text), 1));
-    } elseif ($caption && preg_match('/^\+/', trim($caption))) {
-        $should_process = true;
-        $content = trim(substr(trim($caption), 1));
-    }
-   
-    if ($should_process && $content) {
-        sendQRCode($chat_id, $content, $message_id, false, $user_id, $language_code);
-    }
-    exit();
-}
-
-/* ==================== پردازش چت خصوصی ==================== */
-elseif ($chat_type == 'private') {
-    if ($current_step !== 'admin_mode') {
-        if ($message_text && !preg_match('/^\/(start|help|language|panel)/i', trim($message_text))) {
-            sendQRCode($chat_id, $message_text, $message_id, true, $user_id, $language_code);
-        } elseif ($content_type && $current_step !== 'admin_mode') {
-            // فقط نوع محتوا رو ذکر کن، نه لینک فایل
-            $content_type_text = strtoupper($content_type);
-            $content = "";
+        // 3. اگر NPC هم نبود، یک NPC جدید بساز
+        if (!target) {
+            player.sendMessage(`§eCreating NPC "${targetName}" for testing...`);
             
-            if ($caption) {
-                $content = $caption;
-            } else {
-                $content = "فایل " . $content_type_text;
+            try {
+                // NPC رو با کامند summon ایجاد کن
+                player.runCommand(`summon armor_stand "${targetName}" ~ ~ ~`);
+                
+                // صبر کن NPC ایجاد شه
+                system.runTimeout(() => {
+                    const entities = player.dimension.getEntities({
+                        name: targetName,
+                        type: "minecraft:armor_stand"
+                    });
+                    
+                    if (entities.length > 0) {
+                        const npc = entities[0];
+                        npcList.set(targetName.toLowerCase(), npc);
+                        
+                        // شروع ترک NPC
+                        trackingData.set(player.id, {
+                            targetId: npc.id,
+                            targetName: targetName,
+                            startTime: Date.now(),
+                            isNPC: true
+                        });
+                        
+                        player.sendMessage(`§aNow tracking NPC: §e${targetName}§a!`);
+                        player.sendMessage('§7Move the NPC with: §f/tp @e[name="' + targetName + '"] ~ ~ ~');
+                        player.sendMessage('§7Type §f/cancel track §7to stop.');
+                    }
+                }, 10);
+                
+            } catch (e) {
+                player.sendMessage('§cCould not create NPC. Make sure cheats are enabled!');
             }
-           
-            sendQRCode($chat_id, $content, $message_id, true, $user_id, $language_code);
+            
+            return;
+        }
+        
+        if (player.id === target.id) {
+            player.sendMessage('§cYou cannot track yourself!');
+            return;
+        }
+        
+        // ذخیره اطلاعات
+        trackingData.set(player.id, {
+            targetId: target.id,
+            targetName: target.name || targetName,
+            startTime: Date.now(),
+            isNPC: target.typeId === 'minecraft:armor_stand'
+        });
+        
+        player.sendMessage(`§aTracking §e${target.name || targetName}§a! Distance will appear below your coordinates.`);
+        player.sendMessage('§7Type §f/cancel track §7to stop.');
+    }
+    
+    // دستور /cancel track
+    else if (message === '/cancel track') {
+        event.cancel = true;
+        
+        if (trackingData.has(player.id)) {
+            const data = trackingData.get(player.id);
+            trackingData.delete(player.id);
+            
+            // پاک کردن HUD
+            player.onScreenDisplay.setActionBar('');
+            
+            player.sendMessage(`§cStopped tracking §e${data.targetName}§c.`);
+        } else {
+            player.sendMessage('§cYou are not tracking anyone!');
         }
     }
-    exit();
+    
+    // دستور کمکی برای ساخت NPC
+    else if (message.startsWith('/createnpc ')) {
+        event.cancel = true;
+        
+        const npcName = message.split(' ')[1];
+        player.runCommand(`summon armor_stand "${npcName}" ~ ~5 ~`);
+        player.sendMessage(`§aNPC "${npcName}" created! Now use: §e/track ${npcName}`);
+    }
+    
+    // دستور کمکی برای لیست NPCها
+    else if (message === '/listnpcs') {
+        event.cancel = true;
+        
+        if (npcList.size === 0) {
+            player.sendMessage('§7No NPCs created yet. Use: §f/createnpc [name]');
+        } else {
+            player.sendMessage('§6Available NPCs:');
+            for (const [name, npc] of npcList) {
+                const pos = npc.location;
+                player.sendMessage(`§7- §e${name} §8(X: ${Math.round(pos.x)}, Z: ${Math.round(pos.z)})`);
+            }
+            player.sendMessage('§7Track with: §f/track [name]');
+        }
+    }
+    
+    // دستور کمکی برای حذف NPC
+    else if (message.startsWith('/removenpc ')) {
+        event.cancel = true;
+        
+        const npcName = message.split(' ')[1];
+        if (npcList.has(npcName.toLowerCase())) {
+            const npc = npcList.get(npcName.toLowerCase());
+            npc.triggerEvent('minecraft:despawn');
+            npcList.delete(npcName.toLowerCase());
+            player.sendMessage(`§cRemoved NPC: §e${npcName}`);
+        } else {
+            player.sendMessage(`§cNPC "${npcName}" not found!`);
+        }
+    }
+});
+
+// آپدیت HUD هر ثانیه
+system.runInterval(() => {
+    for (const [playerId, data] of trackingData) {
+        const player = world.getPlayer(playerId);
+        if (!player) {
+            trackingData.delete(playerId);
+            continue;
+        }
+        
+        // پیدا کردن هدف
+        let target;
+        if (data.isNPC) {
+            // اگر NPC هست، از لیست NPCها بگیر
+            const entities = player.dimension.getEntities({ 
+                type: "minecraft:armor_stand",
+                name: data.targetName 
+            });
+            target = entities[0];
+        } else {
+            // اگر بازیکن واقعی هست
+            target = world.getPlayer(data.targetId);
+        }
+        
+        // اگر هدف وجود ندارد
+        if (!target) {
+            trackingData.delete(playerId);
+            player.onScreenDisplay.setActionBar('');
+            player.sendMessage(`§cTarget ${data.targetName} not found. Tracking stopped.`);
+            continue;
+        }
+        
+        // بررسی بعد (dimension) - فقط برای بازیکنان واقعی
+        const playerDim = player.dimension.id;
+        let targetDim = playerDim;
+        
+        if (!data.isNPC) {
+            targetDim = target.dimension.id;
+        }
+        
+        let displayText = '';
+        
+        if (playerDim !== targetDim && !data.isNPC) {
+            // ابعاد مختلف (فقط برای بازیکنان واقعی)
+            const dimName = getDimensionName(targetDim);
+            displayText = `§7Tracking §e${data.targetName}§7: §5in ${dimName}`;
+        } else {
+            // ابعاد یکسان یا NPC - محاسبه فاصله
+            const playerPos = player.location;
+            const targetPos = target.location;
+            
+            // محاسبه فاصله X و Z (ارتفاع مهم نیست)
+            const dx = targetPos.x - playerPos.x;
+            const dz = targetPos.z - playerPos.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            
+            // انتخاب رنگ بر اساس فاصله
+            let color = '§a'; // سبز (دور)
+            if (distance < 100) color = '§e'; // زرد
+            if (distance < 50) color = '§6'; // نارنجی
+            if (distance < 20) color = '§c'; // قرمز
+            if (distance < 5) color = '§4'; // قرمز تیره
+            
+            displayText = `§7Tracking §e${data.targetName}§7: ${color}${Math.round(distance)} blocks`;
+            
+            // برای NPCها جهت هم نشان بده
+            if (data.isNPC && distance > 5) {
+                const direction = getDirection(playerPos, targetPos);
+                displayText += ` §8${direction}`;
+            }
+        }
+        
+        // نمایش HUD
+        player.onScreenDisplay.setActionBar(displayText);
+    }
+}, 20); // هر 1 ثانیه
+
+// تابع کمکی برای نام بعد
+function getDimensionName(dimensionId) {
+    if (dimensionId === 'minecraft:overworld') return 'Overworld';
+    if (dimensionId === 'minecraft:nether') return 'Nether';
+    if (dimensionId === 'minecraft:the_end') return 'End';
+    return dimensionId.replace('minecraft:', '');
 }
+
+// تابع کمکی برای جهت
+function getDirection(pos1, pos2) {
+    const dx = pos2.x - pos1.x;
+    const dz = pos2.z - pos1.z;
+    
+    let angle = Math.atan2(dz, dx) * (180 / Math.PI);
+    angle = (angle + 90 + 360) % 360;
+    
+    const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const index = Math.round(angle / 45) % 8;
+    
+    return directions[index];
+}
+
+// تمیز کردن NPCهای مرده
+system.runInterval(() => {
+    for (const [name, npc] of npcList) {
+        if (!npc.isValid()) {
+            npcList.delete(name);
+        }
+    }
+}, 100); // هر 5 ثانیه
+
+// پیغام شروع
+system.runTimeout(() => {
+    world.sendMessage('§a[Distance Tracker] Type:');
+    world.sendMessage('§7/track [name] §f- Start tracking');
+    world.sendMessage('§7/createnpc [name] §f- Create NPC for testing');
+    world.sendMessage('§7/listnpcs §f- List available NPCs');
+    world.sendMessage('§7/cancel track §f- Stop tracking');
+}, 60);
