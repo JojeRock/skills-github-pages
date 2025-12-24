@@ -1,17 +1,25 @@
 {
-  "format_version": 2,
+  "format_version": 1,
   "header": {
-    "name": "Distance Tracker Resources",
-    "description": "Text resources for distance tracker",
-    "uuid": "B3C4D5E6-F7A8-9012-3456-7890ABCDEF12",  ← تغییر بده!
+    "name": "Player Distance Tracker",
+    "description": "Shows distance to tracked player below coords",
+    "uuid": "ba47f8c8-febf-4ca7-8791-115a5fa1369a",
     "version": [1, 0, 0],
     "min_engine_version": [1, 20, 0]
   },
   "modules": [
     {
-      "type": "resources",
-      "uuid": "C4D5E6F7-A8B9-0123-4567-890ABCDEF123",  ← تغییر بده!
+      "type": "script",
+      "language": "javascript",
+      "uuid": "aaeb499e-ed36-4ea7-8ce4-5d2cd0d43fa7",
+      "entry": "scripts/main.js",
       "version": [1, 0, 0]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "1.8.0"
     }
   ]
 }
